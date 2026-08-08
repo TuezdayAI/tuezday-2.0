@@ -45,8 +45,7 @@ async function insertPolicy(
       createdAt: now,
       updatedAt: now,
     })
-    .onConflictDoNothing()
-    .run();
+    .onConflictDoNothing();
 }
 
 /** Establish the conservative baseline for a workspace exactly once. */
@@ -82,7 +81,7 @@ export async function ensureCampaignActionPolicies(
 
 /** Idempotently bootstrap policy rows for pre-authorization data. */
 export async function backfillExternalActionPolicies(db: Db): Promise<void> {
-  for (const workspace of await db.select({ id: workspaces.id }).from(workspaces).all()) {
+  for (const workspace of await db.select({ id: workspaces.id }).from(workspaces)) {
     await ensureWorkspaceActionPolicies(db, workspace.id);
   }
 
@@ -92,8 +91,7 @@ export async function backfillExternalActionPolicies(db: Db): Promise<void> {
       workspaceId: campaigns.workspaceId,
       automationMode: campaigns.automationMode,
     })
-    .from(campaigns)
-    .all()) {
+    .from(campaigns)) {
     await ensureCampaignActionPolicies(
       db,
       campaign.workspaceId,

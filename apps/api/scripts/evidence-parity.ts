@@ -2,7 +2,7 @@
 // R2R deployment and the native DbEvidenceStore on the same live corpus, and
 // report overlap@5. Manual gate (needs Docker + a real corpus), not CI.
 //
-// Usage: npm run evidence:parity -- <workspace-id> [db-file]
+// Usage: npm run evidence:parity -- <workspace-id> [database-url]
 // Requires: R2R up (R2R_BASE_URL, default http://localhost:7272), the
 // workspace already migrated with `npm run evidence:migrate`, GEMINI_API_KEY
 // for query embeddings.
@@ -11,6 +11,7 @@
 
 import { eq } from "drizzle-orm";
 import { createDb } from "../src/db/index";
+import { resolveDatabaseUrl } from "../src/runtime/database-url";
 import { evidenceCollections, evidenceDocuments } from "../src/db/schema";
 import { DbEvidenceStore } from "../src/evidence/db-store";
 import { GeminiGateway } from "../src/llm/gemini";
@@ -69,13 +70,13 @@ function normalize(text: string): string {
 
 const workspaceId = process.argv[2];
 if (!workspaceId) {
-  console.error("Usage: npm run evidence:parity -- <workspace-id> [db-file]");
+  console.error("Usage: npm run evidence:parity -- <workspace-id> [database-url]");
   process.exit(1);
 }
-const dbFile = process.argv[3] ?? new URL("../tuezday.db", import.meta.url).pathname;
+const databaseUrl = process.argv[3] ?? resolveDatabaseUrl();
 const r2rBaseUrl = (process.env.R2R_BASE_URL?.trim() || "http://localhost:7272").replace(/\/$/, "");
 
-const db = createDb(dbFile);
+const db = await createDb(databaseUrl);
 const store = new DbEvidenceStore(db, new GeminiGateway());
 
 const collection = db

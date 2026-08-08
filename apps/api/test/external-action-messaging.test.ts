@@ -131,7 +131,7 @@ describe("external-action messaging boundary", () => {
       vi.stubEnv(`${k}_CLIENT_ID`, "cid");
       vi.stubEnv(`${k}_CLIENT_SECRET`, "csecret");
     }
-    db = createTestDb();
+    db = await createTestDb();
     state = fabricState();
     app = await buildAuthedApp({
       db,
@@ -192,7 +192,7 @@ describe("external-action messaging boundary", () => {
   }
 
   async function actionRows() {
-    return await db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
+    return await db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId));
   }
 
   // --- Reply fixtures ---------------------------------------------------------
@@ -213,8 +213,7 @@ describe("external-action messaging boundary", () => {
         state: "approved",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     const publicationId = randomUUID();
     await db.insert(publications)
       .values({
@@ -232,8 +231,7 @@ describe("external-action messaging boundary", () => {
         externalUrl: "https://reddit.com/p1",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     const itemId = randomUUID();
     await db.insert(inboxItems)
       .values({
@@ -258,8 +256,7 @@ describe("external-action messaging boundary", () => {
         externalCreatedAt: now,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return itemId;
   }
 
@@ -509,7 +506,7 @@ describe("external-action messaging boundary", () => {
     expect(submission.action.authorizedAt).toBeNull();
     expect(submission.action.subject.kind).toBe("launch_message");
     expect(state.linkedInPosts).toBe(0);
-    expect(await db.select().from(publications).all()).toHaveLength(0);
+    expect(await db.select().from(publications)).toHaveLength(0);
 
     const authorized = await authorize(submission.action.id);
     expect(authorized.statusCode).toBe(200);
@@ -517,10 +514,10 @@ describe("external-action messaging boundary", () => {
     expect(authorized.json().execution.kind).toBe("launch_message");
     expect(state.linkedInPosts).toBe(1);
 
-    const pubs = await db.select().from(publications).all();
+    const pubs = await db.select().from(publications);
     expect(pubs).toHaveLength(1);
     expect(pubs[0]?.externalActionId).toBe(submission.action.id);
-    const message = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).get();
+    const message = (await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)))[0];
     expect(message?.status).toBe("sent");
     expect(message?.externalActionId).toBe(submission.action.id);
 
@@ -528,7 +525,7 @@ describe("external-action messaging boundary", () => {
     const again = await dispatch(launchId, "linkedin");
     expect(again.json().submissions[0].action.id).toBe(submission.action.id);
     expect(state.linkedInPosts).toBe(1);
-    expect(await db.select().from(publications).all()).toHaveLength(1);
+    expect(await db.select().from(publications)).toHaveLength(1);
   });
 
   it("sends one autonomous X action per message with durable partial outcomes", async () => {
@@ -549,7 +546,7 @@ describe("external-action messaging boundary", () => {
     expect(statuses).toEqual(["failed", "succeeded"]);
     expect(state.dms).toBe(1);
 
-    const messages = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).all();
+    const messages = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId));
     const alice = messages.find((m) => m.recipientName === "Alice");
     const bob = messages.find((m) => m.recipientName === "Bob");
     expect(alice?.status).toBe("sent");
@@ -682,8 +679,7 @@ describe("external-action messaging boundary", () => {
         externalCreatedAt: now + HOUR,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     const authorized = await authorize(action!.id);
     expect(authorized.statusCode).toBe(200);
@@ -700,17 +696,16 @@ describe("external-action messaging boundary", () => {
     await approveLaunchDrafts(launchId);
     const queued = (await dispatch(launchId, "linkedin")).json().submissions[0];
 
-    const message = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).get();
+    const message = (await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)))[0];
     await db.update(drafts)
       .set({ content: "Edited after the proposal", updatedAt: Date.now() })
-      .where(eq(drafts.id, message!.draftId!))
-      .run();
+      .where(eq(drafts.id, message!.draftId!));
 
     const authorized = await authorize(queued.action.id);
     expect(authorized.statusCode).toBe(409);
     expect(authorized.json().action.status).toBe("stale");
     expect(state.linkedInPosts).toBe(0);
-    expect(await db.select().from(publications).all()).toHaveLength(0);
+    expect(await db.select().from(publications)).toHaveLength(0);
   });
 
   // --- CSV is an export-only download, outside governance because it never sends ---

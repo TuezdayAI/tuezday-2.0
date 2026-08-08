@@ -84,7 +84,7 @@ describe("connector fabric API", () => {
     state = { healthy: true, integrations: new Set(), connections: new Map(), proxyStatus: 200 };
     received = [];
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),
       fetcher: webhookFetcher(received, ["failing.example.com"]),

@@ -138,7 +138,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
     };
   }
 
-  async function workspace(db: ReturnType<typeof createTestDb>) {
+  async function workspace(db: Awaited<ReturnType<typeof createTestDb>>) {
     const app = await buildAuthedApp({ db });
     const id = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Metered" } })
@@ -148,13 +148,13 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
   }
 
   it("records one ledger row per successful call with pricing-table cost", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await workspace(db);
     const metered = meteredLlm(fakeLlm(), db, { workspaceId, pipeline: "generation", campaignId: null });
 
     await metered.generate({ prompt: "draft it" });
 
-    const rows = await db.select().from(llmUsageEvents).all();
+    const rows = await db.select().from(llmUsageEvents);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       workspaceId,
@@ -171,7 +171,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
   });
 
   it("a throw never bills, and a result without usage goes unmetered", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await workspace(db);
     await expect(
       await meteredLlm(fakeLlm({ fail: true }), db, { workspaceId, pipeline: "review" }).generate({
@@ -181,11 +181,11 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
     await meteredLlm(fakeLlm({ usage: false }), db, { workspaceId, pipeline: "review" }).generate({
       prompt: "y",
     });
-    expect(await db.select().from(llmUsageEvents).all()).toHaveLength(0);
+    expect(await db.select().from(llmUsageEvents)).toHaveLength(0);
   });
 
   it("spendRollup groups by pipeline, sorts by cost, and computes the cache hit rate", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await workspace(db);
     await recordLlmUsage(db, {
       workspaceId,
@@ -221,7 +221,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
   });
 
   it("sumLlmSpendCents respects the window boundary", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await workspace(db);
     await recordLlmUsage(db, {
       workspaceId,
@@ -239,7 +239,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
 describe("worker degradation at the budget cap (Sprint 59)", () => {
   it("automation reports blocked: llm_budget_exhausted and makes zero model calls", async () => {
     vi.stubEnv("TEST_BILLING_GATING", "1");
-    const db = createTestDb();
+    const db = await createTestDb();
     let llmCalls = 0;
     const llm: LlmGateway = {
       async generate() {

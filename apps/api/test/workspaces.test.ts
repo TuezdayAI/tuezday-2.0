@@ -9,7 +9,7 @@ describe("workspaces API", () => {
 
   beforeEach(async () => {
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       safeFetch: fixtureSafeFetch(() => ({
         body: "<html><body>Workspace website</body></html>",
         contentType: "text/html",

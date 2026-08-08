@@ -61,8 +61,7 @@ const unusedFabric = {} as Parameters<typeof runDiscoveryScheduler>[0]["fabric"]
 
 async function seedWorkspace(db: Db, id = "workspace-1"): Promise<void> {
   await db.insert(workspaces)
-    .values({ id, name: id, createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id, name: id, createdAt: 1, updatedAt: 1 });
 }
 
 async function seedSource(
@@ -93,8 +92,7 @@ async function seedSource(
       lastAttemptedAt: null,
       executionVersion: 1,
       createdAt: 1,
-    })
-    .run();
+    });
 }
 
 function page(
@@ -283,7 +281,7 @@ describe("tracked target version fences", () => {
   it.each(["update", "delete"] as const)(
     "invalidates leased source work when a tracked target is %s",
     async (operation) => {
-      const db = createTestDb();
+      const db = await createTestDb();
       await seedWorkspace(db);
       await db.insert(trackedSocialAccounts)
         .values({
@@ -300,8 +298,7 @@ describe("tracked target version fences", () => {
           lastError: null,
           createdAt: 1,
           updatedAt: 1,
-        })
-        .run();
+        });
       await seedSource(db, {
         id: "tracked-source",
         type: "x",
@@ -338,18 +335,16 @@ describe("tracked target version fences", () => {
       }
 
       expect(
-        (await db
+        ((await db
           .select()
           .from(discoverySources)
-          .where(eq(discoverySources.id, "tracked-source"))
-          .get())!.executionVersion,
+          .where(eq(discoverySources.id, "tracked-source")))[0])!.executionVersion,
       ).toBe(2);
       expect(
-        await db
+        (await db
           .select()
           .from(discoveryJobs)
-          .where(eq(discoveryJobs.id, claim.id))
-          .get(),
+          .where(eq(discoveryJobs.id, claim.id)))[0],
       ).toMatchObject({
         status: "skipped",
         error: "source_version_changed",
@@ -365,13 +360,12 @@ describe("bounded leased discovery scheduler", () => {
   });
 
   it("never enqueues a reserved source even when it is enabled", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, { id: "reserved-trends", type: "google_trends" });
     await db.update(discoverySources)
       .set({ status: "reserved", enabled: true })
-      .where(eq(discoverySources.id, "reserved-trends"))
-      .run();
+      .where(eq(discoverySources.id, "reserved-trends"));
     let pageCalls = 0;
 
     const result = await runDiscoveryScheduler(
@@ -385,11 +379,11 @@ describe("bounded leased discovery scheduler", () => {
     expect(result.queued).toBe(0);
     expect(result.processed).toBe(0);
     expect(pageCalls).toBe(0);
-    expect(await db.select().from(discoveryJobs).all()).toEqual([]);
+    expect(await db.select().from(discoveryJobs)).toEqual([]);
   });
 
   it("never enqueues reserved intent even when a provider is configured", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, {
       id: "reserved-intent",
@@ -398,8 +392,7 @@ describe("bounded leased discovery scheduler", () => {
     });
     await db.update(discoverySources)
       .set({ status: "reserved", enabled: true })
-      .where(eq(discoverySources.id, "reserved-intent"))
-      .run();
+      .where(eq(discoverySources.id, "reserved-intent"));
     let pageCalls = 0;
     const deps = dependencies(db, async ({ target }) => {
       pageCalls += 1;
@@ -420,11 +413,11 @@ describe("bounded leased discovery scheduler", () => {
     expect(result.queued).toBe(0);
     expect(result.processed).toBe(0);
     expect(pageCalls).toBe(0);
-    expect(await db.select().from(discoveryJobs).all()).toEqual([]);
+    expect(await db.select().from(discoveryJobs)).toEqual([]);
   });
 
   it("returns busy for overlap and makes zero calls from the losing tick", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, { id: "source-1" });
     const held = deferred<DiscoveryPage>();
@@ -449,7 +442,7 @@ describe("bounded leased discovery scheduler", () => {
   });
 
   it("claims just in time and admits at most five jobs", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     for (let index = 1; index <= 6; index += 1) {
       await seedSource(db, { id: `source-${index}` });
@@ -474,15 +467,13 @@ describe("bounded leased discovery scheduler", () => {
     expect(
       (await db
         .select()
-        .from(discoveryJobs)
-        .all())
+        .from(discoveryJobs))
         .filter((job) => job.status === "running"),
     ).toHaveLength(1);
     expect(
       (await db
         .select()
-        .from(discoveryJobs)
-        .all())
+        .from(discoveryJobs))
         .filter((job) => job.status === "queued"),
     ).toHaveLength(5);
 
@@ -493,14 +484,13 @@ describe("bounded leased discovery scheduler", () => {
     expect(
       (await db
         .select()
-        .from(discoveryJobs)
-        .all())
+        .from(discoveryJobs))
         .filter((job) => job.status === "queued"),
     ).toHaveLength(1);
   });
 
   it("applies item, page, call, and byte budgets across all targets", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, {
       id: "multi-target",
@@ -569,7 +559,7 @@ describe("bounded leased discovery scheduler", () => {
   ] as const)(
     "enforces the global %s cap before reading another target",
     async (_label, override, expectedCode) => {
-      const db = createTestDb();
+      const db = await createTestDb();
       await seedWorkspace(db);
       await seedSource(db, {
         id: "bounded-targets",
@@ -602,7 +592,7 @@ describe("bounded leased discovery scheduler", () => {
   );
 
   it("continues after one target has a permission failure", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, {
       id: "permission-mix",
@@ -641,7 +631,7 @@ describe("bounded leased discovery scheduler", () => {
 
   it("aborts the page reader at the source deadline without sleeping", async () => {
     vi.useFakeTimers();
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, { id: "slow-source" });
     let receivedSignal: AbortSignal | undefined;
@@ -680,7 +670,7 @@ describe("bounded leased discovery scheduler", () => {
   it("stops before another claim when the tick has no meaningful source budget", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-29T00:00:00.000Z"));
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, { id: "source-1" });
     await seedSource(db, { id: "source-2" });
@@ -708,14 +698,13 @@ describe("bounded leased discovery scheduler", () => {
     expect(
       (await db
         .select()
-        .from(discoveryJobs)
-        .all())
+        .from(discoveryJobs))
         .filter((job) => job.status === "queued"),
     ).toHaveLength(1);
   });
 
   it("emits stable safe fields without raw exceptions or cursor tokens", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, { id: "broken-source" });
     const events: DiscoveryOperatorEvent[] = [];
@@ -813,7 +802,7 @@ describe("Fastify discovery shutdown", () => {
       },
     };
     const app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: noScoringLlm,
       safeFetch,
       operatorLog() {},
@@ -863,7 +852,7 @@ describe("Fastify discovery shutdown", () => {
       },
     };
     const app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm,
       safeFetch,
       operatorLog() {},

@@ -99,7 +99,7 @@ export async function createSession(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(chatSessions).values(row).run();
+  await db.insert(chatSessions).values(row);
   return rowToSession(row);
 }
 
@@ -109,8 +109,7 @@ export async function listSessions(db: Db, workspaceId: string): Promise<ChatSes
     .select()
     .from(chatSessions)
     .where(eq(chatSessions.workspaceId, workspaceId))
-    .orderBy(desc(chatSessions.updatedAt))
-    .all())
+    .orderBy(desc(chatSessions.updatedAt)))
     .map(rowToSession);
 }
 
@@ -129,11 +128,10 @@ export async function getSessionRow(
   workspaceId: string,
   sessionId: string,
 ): Promise<ChatSessionRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(chatSessions)
-    .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId)))
-    .get();
+    .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId))))[0];
 }
 
 /**
@@ -157,7 +155,7 @@ export async function updateSession(
   if (input.personaId !== undefined) patch.personaId = input.personaId;
   if (input.channel !== undefined) patch.channel = input.channel;
 
-  await db.update(chatSessions).set(patch).where(eq(chatSessions.id, sessionId)).run();
+  await db.update(chatSessions).set(patch).where(eq(chatSessions.id, sessionId));
   return await getSession(db, workspaceId, sessionId);
 }
 
@@ -167,8 +165,7 @@ export async function setSessionTitleIfEmpty(db: Db, sessionId: string, title: s
   if (!trimmed) return;
   await db.update(chatSessions)
     .set({ title: trimmed })
-    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.title, "")))
-    .run();
+    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.title, "")));
 }
 
 /** Set the goal once, when a thread has none (D-76.12). */
@@ -177,8 +174,7 @@ export async function setSessionGoalIfEmpty(db: Db, sessionId: string, goal: str
   if (!trimmed) return;
   await db.update(chatSessions)
     .set({ goal: trimmed })
-    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.goal, "")))
-    .run();
+    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.goal, "")));
 }
 
 export interface ThreadUsage {
@@ -200,8 +196,7 @@ export async function addSessionUsage(db: Db, sessionId: string, usage: ThreadUs
       totalCostCents: sql`${chatSessions.totalCostCents} + ${usage.costCents}`,
       updatedAt: Date.now(),
     })
-    .where(eq(chatSessions.id, sessionId))
-    .run();
+    .where(eq(chatSessions.id, sessionId));
 }
 
 export function threadTokens(session: Pick<ChatSession, "totalInputTokens" | "totalOutputTokens">): number {
@@ -220,8 +215,7 @@ export function isThreadBudgetExhausted(session: ChatSession): boolean {
 export async function setCompactedThrough(db: Db, sessionId: string, messageId: string): Promise<void> {
   await db.update(chatSessions)
     .set({ compactedThroughMessageId: messageId })
-    .where(eq(chatSessions.id, sessionId))
-    .run();
+    .where(eq(chatSessions.id, sessionId));
 }
 
 export async function deleteSession(db: Db, workspaceId: string, sessionId: string): Promise<boolean> {
@@ -229,8 +223,7 @@ export async function deleteSession(db: Db, workspaceId: string, sessionId: stri
   if (!existing) return false;
   // chat_messages cascade on session delete (FK onDelete: cascade).
   await db.delete(chatSessions)
-    .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId)))
-    .run();
+    .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId)));
   return true;
 }
 
@@ -248,8 +241,7 @@ export async function listMessages(db: Db, sessionId: string): Promise<ChatMessa
     .select()
     .from(chatMessages)
     .where(eq(chatMessages.sessionId, sessionId))
-    .orderBy(asc(chatMessages.seq))
-    .all())
+    .orderBy(asc(chatMessages.seq)))
     .map(rowToMessage);
 }
 
@@ -299,7 +291,9 @@ export async function appendMessage(
   input: AppendMessageInput,
 ): Promise<ChatMessage> {
   const now = Date.now();
-  const row: ChatMessageRow = {
+  // `seq` is assigned by the database (it breaks same-millisecond ties in
+  // transcript order), so the row is written as an insert and read back.
+  const row: typeof chatMessages.$inferInsert = {
     id: randomUUID(),
     sessionId,
     workspaceId,
@@ -320,7 +314,7 @@ export async function appendMessage(
     stopReason: input.stopReason ?? null,
     createdAt: now,
   };
-  await db.insert(chatMessages).values(row).run();
-  await db.update(chatSessions).set({ updatedAt: now }).where(eq(chatSessions.id, sessionId)).run();
-  return rowToMessage(row);
+  const inserted = (await db.insert(chatMessages).values(row).returning())[0]!;
+  await db.update(chatSessions).set({ updatedAt: now }).where(eq(chatSessions.id, sessionId));
+  return rowToMessage(inserted);
 }

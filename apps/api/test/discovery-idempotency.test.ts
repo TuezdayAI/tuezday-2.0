@@ -36,15 +36,14 @@ async function claimedFixture(
     config?: Record<string, unknown>;
   } = {},
 ) {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
     .values({
       id: "workspace-1",
       name: "Idempotency",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(discoverySources)
     .values({
       id: "source-1",
@@ -66,8 +65,7 @@ async function claimedFixture(
       lastAttemptedAt: null,
       executionVersion: 1,
       createdAt: 1,
-    })
-    .run();
+    });
   await enqueueDueDiscoveryJobs(
     db,
     "workspace-1",
@@ -139,7 +137,7 @@ function sourceBudget() {
 }
 
 async function occurrenceCount(db: Db): Promise<number> {
-  return (await db.select().from(discoveredItems).all()).length;
+  return (await db.select().from(discoveredItems)).length;
 }
 
 describe("atomic discovery occurrence checkpoints", () => {
@@ -167,20 +165,18 @@ describe("atomic discovery occurrence checkpoints", () => {
 
     expect(await occurrenceCount(db)).toBe(0);
     // Sprint 60 shadow layer rolls back with the page too.
-    expect(await db.select().from(discoverySourceOccurrences).all()).toHaveLength(0);
-    expect(await db.select().from(canonicalExternalStories).all()).toHaveLength(0);
-    expect(await db.select().from(storyOccurrences).all()).toHaveLength(0);
-    const sourceRow = (await db
+    expect(await db.select().from(discoverySourceOccurrences)).toHaveLength(0);
+    expect(await db.select().from(canonicalExternalStories)).toHaveLength(0);
+    expect(await db.select().from(storyOccurrences)).toHaveLength(0);
+    const sourceRow = ((await db
       .select()
       .from(discoverySources)
-      .where(eq(discoverySources.id, source.id))
-      .get())!;
+      .where(eq(discoverySources.id, source.id)))[0])!;
     expect(sourceRow.cursorJson).toBe("{}");
-    const job = (await db
+    const job = ((await db
       .select()
       .from(discoveryJobs)
-      .where(eq(discoveryJobs.id, claim.id))
-      .get())!;
+      .where(eq(discoveryJobs.id, claim.id)))[0])!;
     expect(job.fetchedCount).toBe(0);
     expect(job.newCount).toBe(0);
   });
@@ -189,29 +185,26 @@ describe("atomic discovery occurrence checkpoints", () => {
     const { db, claim, source, cursor, page } = await claimedFixture();
     await db.update(discoveryJobs)
       .set({ leaseOwner: "new-owner", leaseVersion: claim.leaseVersion + 1 })
-      .where(eq(discoveryJobs.id, claim.id))
-      .run();
+      .where(eq(discoveryJobs.id, claim.id));
 
     expect(
       await persistDiscoveryPage(db, { claim, source, page, cursor }),
     ).toBeNull();
     expect(await occurrenceCount(db)).toBe(0);
     expect(
-      (await db
+      ((await db
         .select({ cursorJson: discoverySources.cursorJson })
         .from(discoverySources)
-        .where(eq(discoverySources.id, source.id))
-        .get())!.cursorJson,
+        .where(eq(discoverySources.id, source.id)))[0])!.cursorJson,
     ).toBe("{}");
     expect(
-      await db
+      (await db
         .select({
           fetchedCount: discoveryJobs.fetchedCount,
           newCount: discoveryJobs.newCount,
         })
         .from(discoveryJobs)
-        .where(eq(discoveryJobs.id, claim.id))
-        .get(),
+        .where(eq(discoveryJobs.id, claim.id)))[0],
     ).toEqual({ fetchedCount: 0, newCount: 0 });
   });
 
@@ -235,8 +228,7 @@ describe("atomic discovery occurrence checkpoints", () => {
             eq(discoveredItems.sourceId, source.id),
             eq(discoveredItems.externalId, "occurrence-1"),
           ),
-        )
-        .all(),
+        ),
     ).toHaveLength(1);
   });
 
@@ -283,11 +275,10 @@ describe("atomic discovery occurrence checkpoints", () => {
     expect(result.error).toBe("adapter_missing_external_id");
     expect(await occurrenceCount(db)).toBe(0);
     expect(
-      (await db
+      ((await db
         .select({ error: discoveryJobs.error })
         .from(discoveryJobs)
-        .where(eq(discoveryJobs.id, claim.id))
-        .get())!.error,
+        .where(eq(discoveryJobs.id, claim.id)))[0])!.error,
     ).toBe("adapter_missing_external_id");
   });
 
@@ -384,8 +375,7 @@ describe("atomic discovery occurrence checkpoints", () => {
         .select({
           externalId: discoveredItems.externalId,
         })
-        .from(discoveredItems)
-        .all())
+        .from(discoveredItems))
         .map((row) => row.externalId)
         .sort(),
     ).toEqual(["occurrence-first", "occurrence-second"]);
@@ -469,8 +459,7 @@ describe("atomic discovery occurrence checkpoints", () => {
     };
     await db.update(discoverySources)
       .set({ cursorJson: JSON.stringify(cursor) })
-      .where(eq(discoverySources.id, claim.sourceId))
-      .run();
+      .where(eq(discoverySources.id, claim.sourceId));
     const visitedTokens: Array<string | null> = [];
 
     const result = await runClaimedDiscoverySource(

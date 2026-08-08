@@ -11,8 +11,7 @@ async function seedWorkspace(db: Db): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
   await db.insert(workspaces)
-    .values({ id, name: "Metrics WS", createdAt: now, updatedAt: now })
-    .run();
+    .values({ id, name: "Metrics WS", createdAt: now, updatedAt: now });
   return id;
 }
 
@@ -21,7 +20,7 @@ describe("recordMetric", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     workspaceId = await seedWorkspace(db);
   });
 
@@ -41,7 +40,7 @@ describe("recordMetric", () => {
     await recordMetric(db, workspaceId, { ...grain(subjectId), value: 100 });
     await recordMetric(db, workspaceId, { ...grain(subjectId), value: 250 });
 
-    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.value).toBe(250);
   });
@@ -52,7 +51,7 @@ describe("recordMetric", () => {
     await recordMetric(db, workspaceId, { ...grain(subjectId), window: "7d", value: 900 });
     await recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "clicks", value: 12 });
 
-    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId));
     expect(rows).toHaveLength(3);
   });
 
@@ -61,7 +60,7 @@ describe("recordMetric", () => {
     await recordMetric(db, workspaceId, { ...grain(subjectId), value: null });
     await recordMetric(db, workspaceId, { ...grain(subjectId), value: undefined });
 
-    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId));
     expect(rows).toHaveLength(0);
   });
 

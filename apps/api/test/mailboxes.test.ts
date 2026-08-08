@@ -98,7 +98,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
     classifyShouldFail = false;
     vi.stubEnv("EMAIL_UNSUBSCRIBE_SECRET", "unsub-secret");
     vi.stubEnv("APP_BASE_URL", "https://app.test");
-    db = createTestDb();
+    db = await createTestDb();
     gmail = new FakeGmailProvider();
     app = await buildAuthedApp({ db, llm: fakeGateway(), gmail, workerToken: WORKER_TOKEN });
     workspaceId = (
@@ -132,8 +132,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         contentProfileJson: "{}",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -170,8 +169,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         createdAt: now,
         updatedAt: now,
       })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
     await db.insert(emailRecipientPermissions)
       .values({
         id: randomUUID(),
@@ -180,8 +178,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         status: "allowed",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
   }
 
   async function approvedDraftForLead(email = "prospect@acme.io"): Promise<string> {
@@ -288,7 +285,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         url: `/workspaces/${workspaceId}/mailboxes/${mailboxId}`,
       });
       expect(res.statusCode).toBe(204);
-      const row = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).get();
+      const row = (await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)))[0];
       expect(row?.status).toBe("disconnected");
     });
   });
@@ -315,11 +312,10 @@ describe("outreach mailboxes (Sprint 47)", () => {
       expect(gmail.lastSendInput?.text).toContain("— Jane");
       expect(gmail.lastSendInput?.text).toContain("Unsubscribe: https://app.test/u/");
 
-      const delivery = await db
+      const delivery = (await db
         .select()
         .from(emailDeliveries)
-        .where(eq(emailDeliveries.workspaceId, workspaceId))
-        .get();
+        .where(eq(emailDeliveries.workspaceId, workspaceId)))[0];
       expect(delivery?.provider).toBe("gmail");
       expect(delivery?.mailboxId).toBe(mailboxId);
       expect(delivery?.providerThreadId).toBeTruthy();
@@ -347,8 +343,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
           normalizedEmail: "prospect@acme.io",
           reason: "unsubscribe",
           createdAt: Date.now(),
-        })
-        .run();
+        });
 
       const send = await sendFromMailbox(draftId, mailboxId);
       expect(send.json().action.status).toBe("blocked");
@@ -433,11 +428,10 @@ describe("outreach mailboxes (Sprint 47)", () => {
       const draftId = await approvedDraftForLead();
       await enableEmail("prospect@acme.io");
       await sendFromMailbox(draftId, mailboxId);
-      const delivery = await db
+      const delivery = (await db
         .select()
         .from(emailDeliveries)
-        .where(eq(emailDeliveries.provider, "gmail"))
-        .get();
+        .where(eq(emailDeliveries.provider, "gmail")))[0];
       return { mailboxId, threadId: delivery!.providerThreadId! };
     }
 
@@ -467,7 +461,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
       expect(run.statusCode).toBe(200);
       expect(run.json().newItems).toBe(1);
 
-      const items = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).all();
+      const items = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId));
       expect(items).toHaveLength(1);
       expect(items[0]!.kind).toBe("email");
       expect(items[0]!.content).toContain("interested");
@@ -486,7 +480,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         url: `/workspaces/${workspaceId}/mailbox-inbox/run`,
       });
       expect(second.json().newItems).toBe(0);
-      const items = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).all();
+      const items = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId));
       expect(items).toHaveLength(1); // own-address message never ingested
     });
 
@@ -499,7 +493,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         url: `/workspaces/${workspaceId}/mailbox-inbox/run`,
       });
       expect(run.json().labeled).toBe(1);
-      const item = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
+      const item = (await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)))[0];
       expect(item?.replyLabel).toBe("unsubscribe_request");
       expect(item?.emailDeliveryId).toBeTruthy();
     });
@@ -515,14 +509,14 @@ describe("outreach mailboxes (Sprint 47)", () => {
       });
       expect(run.json().newItems).toBe(1);
       expect(run.json().labeled).toBe(0);
-      const item = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
+      const item = (await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)))[0];
       expect(item?.replyLabel ?? null).toBeNull();
     });
 
     it("advances lastPolledAt", async () => {
       const { mailboxId } = await sendAndGetThread();
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/mailbox-inbox/run` });
-      const row = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).get();
+      const row = (await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)))[0];
       expect(row?.lastPolledAt).toBeTruthy();
     });
 
@@ -530,14 +524,14 @@ describe("outreach mailboxes (Sprint 47)", () => {
       const { threadId } = await sendAndGetThread();
       gmail.inbound = [reply(threadId, "interested")];
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/mailbox-inbox/run` });
-      const item = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
+      const item = (await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)))[0];
 
       const res = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/inbox/${item!.id}/reply`,
       });
       expect(res.statusCode).toBe(200);
-      const updated = await db.select().from(inboxItems).where(eq(inboxItems.id, item!.id)).get();
+      const updated = (await db.select().from(inboxItems).where(eq(inboxItems.id, item!.id)))[0];
       expect(updated?.replyDraftId).toBeTruthy();
     });
   });

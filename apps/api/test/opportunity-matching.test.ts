@@ -217,7 +217,7 @@ describe("opportunity routing (Sprint 61)", () => {
   let personaId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({
       db,
       llm: matcherGateway(() => []),
@@ -284,19 +284,17 @@ describe("opportunity routing (Sprint 61)", () => {
         observedAt: Date.now(),
       });
     });
-    return (await db
+    return ((await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.title, title))
-      .get())!.id;
+      .where(eq(canonicalExternalStories.title, title)))[0])!.id;
   }
 
   async function storyRow(storyId: string) {
-    return (await db
+    return ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, storyId))
-      .get())!;
+      .where(eq(canonicalExternalStories.id, storyId)))[0])!;
   }
 
   async function opportunitiesFor(storyId: string) {
@@ -304,8 +302,7 @@ describe("opportunity routing (Sprint 61)", () => {
       .select()
       .from(campaignOpportunities)
       .where(eq(campaignOpportunities.canonicalStoryId, storyId))
-      .orderBy(asc(campaignOpportunities.createdAt), asc(campaignOpportunities.id))
-      .all();
+      .orderBy(asc(campaignOpportunities.createdAt), asc(campaignOpportunities.id));
   }
 
   it("creates independent per-campaign opportunities and is idempotent", async () => {
@@ -329,8 +326,7 @@ describe("opportunity routing (Sprint 61)", () => {
       .select()
       .from(campaignOpportunityEvents)
       .where(eq(campaignOpportunityEvents.opportunityId, rows[0]!.id))
-      .orderBy(asc(campaignOpportunityEvents.createdAt))
-      .all())
+      .orderBy(asc(campaignOpportunityEvents.createdAt)))
       // Same-millisecond pair: creation (fromStatus null) sorts first.
       .sort((a, b) => Number(a.fromStatus !== null) - Number(b.fromStatus !== null));
     expect(events.map((e) => [e.fromStatus, e.toStatus])).toEqual([
@@ -497,12 +493,10 @@ describe("opportunity routing (Sprint 61)", () => {
     const past = Date.now() - 60_000;
     await db.update(campaignOpportunities)
       .set({ expiresAt: past })
-      .where(eq(campaignOpportunities.id, rows[0]!.id))
-      .run();
+      .where(eq(campaignOpportunities.id, rows[0]!.id));
     await db.update(campaignOpportunities)
       .set({ expiresAt: past, status: "dismissed" })
-      .where(eq(campaignOpportunities.id, rows[1]!.id))
-      .run();
+      .where(eq(campaignOpportunities.id, rows[1]!.id));
 
     expect(await expireDueOpportunities(db, workspaceId)).toBe(1);
     const after = await opportunitiesFor(storyId);

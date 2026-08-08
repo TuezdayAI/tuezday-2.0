@@ -10,7 +10,7 @@ import {
   type SufficiencyResponse,
   type SufficiencyVerdict,
 } from "@tuezday/contracts";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   campaignLaneRevisions,
   campaignLanes,
@@ -39,7 +39,6 @@ import { persistLaneEligibility } from "./lane-eligibility";
 import { clampScore } from "./matching";
 import { DATABASE_NOW_MS } from "./task-leases";
 import { getWorkspace } from "./workspaces";
-
 /** Consecutive retryable failures before the queue parks a package `failed`. */
 export const ASSESSMENT_MAX_ATTEMPTS = 3;
 const CLAIMS_MAX = 8;
@@ -76,8 +75,7 @@ export async function candidateFormatsFor(
     })
     .from(campaignLaneRevisions)
     .innerJoin(campaignLanes, eq(campaignLaneRevisions.laneId, campaignLanes.id))
-    .where(eq(campaignLaneRevisions.planRevisionId, pkg.planRevisionId))
-    .all();
+    .where(eq(campaignLaneRevisions.planRevisionId, pkg.planRevisionId));
   const seen = new Map<string, CandidateFormat>();
   for (const row of rows) {
     if (row.revisionStatus !== "active" || row.laneStatus !== "active") continue;
@@ -132,8 +130,7 @@ export async function claimAssessmentBatch(
           ),
         ),
       )
-      .orderBy(asc(contentPackages.createdAt), asc(contentPackages.id))
-      .all();
+      .orderBy(asc(contentPackages.createdAt), asc(contentPackages.id));
     for (const pkg of due) {
       if (claims.length >= input.limit) break;
       const claimed = await tx
@@ -149,9 +146,8 @@ export async function claimAssessmentBatch(
             eq(contentPackages.assessmentState, pkg.assessmentState),
             eq(contentPackages.updatedAt, pkg.updatedAt),
           ),
-        )
-        .run();
-      if (claimed.changes !== 1) continue;
+        );
+      if (rowsAffected(claimed) !== 1) continue;
       claims.push({ packageId: pkg.id, workspaceId: pkg.workspaceId });
     }
     return claims;
@@ -160,7 +156,7 @@ export async function claimAssessmentBatch(
 
 export async function markAssessmentRetryable(db: Db, claim: AssessmentClaim): Promise<boolean> {
   return await db.transaction(async (tx) => {
-    const pkg = await tx
+    const pkg = (await tx
       .select()
       .from(contentPackages)
       .where(
@@ -168,8 +164,7 @@ export async function markAssessmentRetryable(db: Db, claim: AssessmentClaim): P
           eq(contentPackages.id, claim.packageId),
           eq(contentPackages.assessmentState, "in_progress"),
         ),
-      )
-      .get();
+      ))[0];
     if (!pkg) return false;
     const attempts = pkg.assessmentAttempts + 1;
     await tx.update(contentPackages)
@@ -180,8 +175,7 @@ export async function markAssessmentRetryable(db: Db, claim: AssessmentClaim): P
         assessmentLeaseExpiresAt: null,
         updatedAt: Date.now(),
       })
-      .where(eq(contentPackages.id, claim.packageId))
-      .run();
+      .where(eq(contentPackages.id, claim.packageId));
     return true;
   });
 }
@@ -322,7 +316,7 @@ export async function commitAssessment(
   const now = Date.now();
   try {
     return await db.transaction(async (tx) => {
-      const pkg = await tx
+      const pkg = (await tx
         .select()
         .from(contentPackages)
         .where(
@@ -332,15 +326,13 @@ export async function commitAssessment(
             eq(contentPackages.status, "assessing"),
             eq(contentPackages.assessmentState, "in_progress"),
           ),
-        )
-        .get();
+        ))[0];
       if (!pkg) throw new AssessmentFenceError();
       const version =
-        ((await tx
+        (((await tx
           .select({ n: sql<number>`MAX(${sufficiencyAssessments.assessmentVersion})` })
           .from(sufficiencyAssessments)
-          .where(eq(sufficiencyAssessments.packageId, pkg.id))
-          .get())?.n ?? 0) + 1;
+          .where(eq(sufficiencyAssessments.packageId, pkg.id)))[0])?.n ?? 0) + 1;
       const assessmentId = randomUUID();
       await tx.insert(sufficiencyAssessments)
         .values({
@@ -358,13 +350,11 @@ export async function commitAssessment(
           researchActionsJson: JSON.stringify(normalized.researchActions),
           assessorVersion: SUFFICIENCY_ASSESSOR_VERSION,
           createdAt: now,
-        })
-        .run();
-      const assessmentRow = (await tx
+        });
+      const assessmentRow = ((await tx
         .select()
         .from(sufficiencyAssessments)
-        .where(eq(sufficiencyAssessments.id, assessmentId))
-        .get())!;
+        .where(eq(sufficiencyAssessments.id, assessmentId)))[0])!;
 
       let toStatus: PackageStatus;
       let reason: string;
@@ -402,8 +392,7 @@ export async function commitAssessment(
             eq(contentPackages.id, pkg.id),
             eq(contentPackages.assessmentState, "in_progress"),
           ),
-        )
-        .run();
+        );
       await insertPackageEvent(tx, {
         workspaceId: pkg.workspaceId,
         packageId: pkg.id,
@@ -445,8 +434,7 @@ export async function runAutoPackaging(
       ),
     )
     .orderBy(asc(campaignOpportunities.createdAt), asc(campaignOpportunities.id))
-    .limit(input.limit)
-    .all();
+    .limit(input.limit);
   let created = 0;
   for (const row of eligible) {
     try {
@@ -502,19 +490,17 @@ export async function runPackageAssessments(
       if (await markAssessmentRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const pkg = await db
+    const pkg = (await db
       .select()
       .from(contentPackages)
-      .where(eq(contentPackages.id, claim.packageId))
-      .get();
+      .where(eq(contentPackages.id, claim.packageId)))[0];
     if (!pkg) continue;
     const sources = await db
       .select()
       .from(packageSources)
       .where(eq(packageSources.packageId, pkg.id))
-      .orderBy(asc(packageSources.createdAt), asc(packageSources.id))
-      .all();
-    const plan = await db
+      .orderBy(asc(packageSources.createdAt), asc(packageSources.id));
+    const plan = (await db
       .select({
         objective: campaignPlanRevisions.objective,
         kpi: campaignPlanRevisions.kpi,
@@ -524,8 +510,7 @@ export async function runPackageAssessments(
       })
       .from(campaignPlanRevisions)
       .innerJoin(campaigns, eq(campaignPlanRevisions.campaignId, campaigns.id))
-      .where(eq(campaignPlanRevisions.id, pkg.planRevisionId))
-      .get();
+      .where(eq(campaignPlanRevisions.id, pkg.planRevisionId)))[0];
     if (!plan) {
       if (await markAssessmentRetryable(db, claim)) result.failures += 1;
       continue;

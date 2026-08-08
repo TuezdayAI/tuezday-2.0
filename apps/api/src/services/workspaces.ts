@@ -27,15 +27,14 @@ export async function createWorkspace(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(workspaces).values(row).run();
+  await db.insert(workspaces).values(row);
   // Every workspace owns its five brain docs from the moment it exists.
   await ensureBrainDocs(db, row.id);
   // ...and its org-level default design system (Sprint 41 Part 2).
   await ensureDefaultDesignSystem(db, row.id);
   if (ownerId) {
     await db.insert(workspaceMembers)
-      .values({ id: randomUUID(), workspaceId: row.id, userId: ownerId, role: "owner", createdAt: now })
-      .run();
+      .values({ id: randomUUID(), workspaceId: row.id, userId: ownerId, role: "owner", createdAt: now });
   }
   return row;
 }
@@ -51,8 +50,7 @@ export async function listWorkspaces(db: Db): Promise<Workspace[]> {
       updatedAt: workspaces.updatedAt,
     })
     .from(workspaces)
-    .orderBy(desc(workspaces.createdAt))
-    .all())
+    .orderBy(desc(workspaces.createdAt)))
     .map(rowToWorkspace);
 }
 
@@ -81,13 +79,12 @@ export async function listWorkspacesForUser(db: Db, userId: string): Promise<Wor
     })
     .from(workspaces)
     .where(or(inArray(workspaces.id, memberOf), notInArray(workspaces.id, everyMemberedWorkspace)))
-    .orderBy(desc(workspaces.createdAt))
-    .all())
+    .orderBy(desc(workspaces.createdAt)))
     .map(rowToWorkspace);
 }
 
 export async function getWorkspace(db: Db, id: string): Promise<Workspace | undefined> {
-  const row = await db
+  const row = (await db
     .select({
       id: workspaces.id,
       name: workspaces.name,
@@ -97,25 +94,22 @@ export async function getWorkspace(db: Db, id: string): Promise<Workspace | unde
       updatedAt: workspaces.updatedAt,
     })
     .from(workspaces)
-    .where(eq(workspaces.id, id))
-    .get();
+    .where(eq(workspaces.id, id)))[0];
   return row ? rowToWorkspace(row) : undefined;
 }
 
 export async function getAnalyticsOptOut(db: Db, workspaceId: string): Promise<boolean> {
-  const row = await db
+  const row = (await db
     .select({ analyticsOptOut: workspaces.analyticsOptOut })
     .from(workspaces)
-    .where(eq(workspaces.id, workspaceId))
-    .get();
+    .where(eq(workspaces.id, workspaceId)))[0];
   return row?.analyticsOptOut ?? false;
 }
 
 export async function setAnalyticsOptOut(db: Db, workspaceId: string, optOut: boolean): Promise<void> {
   await db.update(workspaces)
     .set({ analyticsOptOut: optOut, updatedAt: Date.now() })
-    .where(eq(workspaces.id, workspaceId))
-    .run();
+    .where(eq(workspaces.id, workspaceId));
 }
 
 /** Move a workspace's onboarding cursor. Returns undefined if it doesn't exist. */
@@ -126,7 +120,6 @@ export async function advanceOnboarding(
 ): Promise<Workspace | undefined> {
   await db.update(workspaces)
     .set({ onboardingStep: step, updatedAt: Date.now() })
-    .where(eq(workspaces.id, id))
-    .run();
+    .where(eq(workspaces.id, id));
   return await getWorkspace(db, id);
 }

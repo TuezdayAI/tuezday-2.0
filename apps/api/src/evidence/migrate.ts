@@ -61,18 +61,16 @@ export async function migrateEvidence(
   const nativeCollectionFor = async (workspaceId: string): Promise<string> => {
     const cached = nativeCollections.get(workspaceId);
     if (cached) return cached;
-    const existing = await db
+    const existing = (await db
       .select()
       .from(evidenceCollections)
-      .where(eq(evidenceCollections.workspaceId, workspaceId))
-      .get();
+      .where(eq(evidenceCollections.workspaceId, workspaceId)))[0];
     // A native collection id is one our own chunks already use.
     if (existing) {
-      const inUse = await db
+      const inUse = (await db
         .select()
         .from(evidenceChunks)
-        .where(eq(evidenceChunks.collectionId, existing.r2rCollectionId))
-        .get();
+        .where(eq(evidenceChunks.collectionId, existing.r2rCollectionId)))[0];
       if (inUse) {
         nativeCollections.set(workspaceId, existing.r2rCollectionId);
         return existing.r2rCollectionId;
@@ -82,36 +80,32 @@ export async function migrateEvidence(
     if (existing) {
       await db.update(evidenceCollections)
         .set({ r2rCollectionId: nativeId })
-        .where(eq(evidenceCollections.workspaceId, workspaceId))
-        .run();
+        .where(eq(evidenceCollections.workspaceId, workspaceId));
     } else {
       await db.insert(evidenceCollections)
-        .values({ workspaceId, r2rCollectionId: nativeId, createdAt: Date.now() })
-        .run();
+        .values({ workspaceId, r2rCollectionId: nativeId, createdAt: Date.now() });
     }
     nativeCollections.set(workspaceId, nativeId);
     return nativeId;
   };
 
-  const docs = await db.select().from(evidenceDocuments).all();
+  const docs = await db.select().from(evidenceDocuments);
   for (const doc of docs) {
     if (doc.status !== "ready" || !doc.r2rDocumentId) continue;
 
-    const alreadyMigrated = await db
+    const alreadyMigrated = (await db
       .select()
       .from(evidenceChunks)
-      .where(eq(evidenceChunks.documentId, doc.r2rDocumentId))
-      .get();
+      .where(eq(evidenceChunks.documentId, doc.r2rDocumentId)))[0];
     if (alreadyMigrated) {
       summary.skipped++;
       continue;
     }
 
-    const candidate = await db
+    const candidate = (await db
       .select()
       .from(evidenceCandidates)
-      .where(eq(evidenceCandidates.evidenceDocumentId, doc.id))
-      .get();
+      .where(eq(evidenceCandidates.evidenceDocumentId, doc.id)))[0];
     const content =
       candidate?.content ?? (await fetchR2rContent(fetcher, r2rBaseUrl, doc.r2rDocumentId));
 
@@ -127,8 +121,7 @@ export async function migrateEvidence(
           error:
             "Migration could not recover this document's content from R2R — re-add it from the Evidence page.",
         })
-        .where(eq(evidenceDocuments.id, doc.id))
-        .run();
+        .where(eq(evidenceDocuments.id, doc.id));
       continue;
     }
 
@@ -141,24 +134,25 @@ export async function migrateEvidence(
     });
     await db.update(evidenceDocuments)
       .set({ r2rDocumentId: nativeDocId })
-      .where(eq(evidenceDocuments.id, doc.id))
-      .run();
+      .where(eq(evidenceDocuments.id, doc.id));
     summary.migrated++;
   }
 
   return summary;
 }
 
-/** CLI entry: `npm run evidence:migrate [-- <db-file>]`. */
+/** CLI entry: `npm run evidence:migrate [-- <database-url>]`. */
 export async function runMigrationCli(): Promise<void> {
-  const [{ createDb }, { DbEvidenceStore }, { GeminiGateway }] = await Promise.all([
-    import("../db/index"),
-    import("./db-store"),
-    import("../llm/gemini"),
-  ]);
-  const file = process.argv[2] ?? new URL("../../tuezday.db", import.meta.url).pathname;
+  const [{ createDb }, { DbEvidenceStore }, { GeminiGateway }, { resolveDatabaseUrl }] =
+    await Promise.all([
+      import("../db/index"),
+      import("./db-store"),
+      import("../llm/gemini"),
+      import("../runtime/database-url"),
+    ]);
+  const databaseUrl = process.argv[2] ?? resolveDatabaseUrl();
   const baseUrl = process.env.R2R_BASE_URL?.trim() || "http://localhost:7272";
-  const db = createDb(file);
+  const db = await createDb(databaseUrl);
   const store = new DbEvidenceStore(db, new GeminiGateway());
   const summary = await migrateEvidence(db, store, fetch, baseUrl);
   console.log(

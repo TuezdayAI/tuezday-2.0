@@ -91,13 +91,12 @@ async function pendingDraft(workspaceId: string): Promise<string> {
       state: "pending_review",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   return id;
 }
 
-beforeEach(() => {
-  db = createTestDb();
+beforeEach(async () => {
+  db = await createTestDb();
 });
 
 describe("cards reach the founder and act (the PRD's acceptance case)", () => {

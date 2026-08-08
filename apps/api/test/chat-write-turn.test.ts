@@ -81,9 +81,9 @@ async function newThread(): Promise<string> {
 }
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   workspaceId = randomUUID();
-  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 });
   await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
 });
 
@@ -169,8 +169,8 @@ describe("a propose call records and does not execute", () => {
       (event) => events.push(event),
     );
 
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
-    expect(await db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
+    expect(await db.select().from(externalActions)).toHaveLength(0);
 
     const stored = await listChatProposals(db, sessionId);
     expect(stored).toHaveLength(1);
@@ -200,8 +200,7 @@ describe("a propose call records and does not execute", () => {
     );
     const step = (await db
       .select()
-      .from(agentRunSteps)
-      .all())
+      .from(agentRunSteps))
       .find((s) => s.toolName === "propose_draft")!;
     const result = JSON.parse(step.toolResultJson!) as { note: string; awaitingConfirmation: boolean };
     expect(result.awaitingConfirmation).toBe(true);
@@ -257,8 +256,7 @@ describe("untrusted content in a turn that holds write tools", () => {
 
     const step = (await db
       .select()
-      .from(agentRunSteps)
-      .all())
+      .from(agentRunSteps))
       .find((s) => s.toolName === "safe_fetch_url")!;
     const stored = JSON.parse(step.toolResultJson!) as {
       untrustedContent: boolean;
@@ -289,7 +287,7 @@ describe("untrusted content in a turn that holds write tools", () => {
     expect(proposal.quarantineReason).toBeTruthy();
     expect(proposal.status).toBe("pending");
     // The acceptance case: "publish immediately" produced no publication.
-    expect(await db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions)).toHaveLength(0);
   });
 
   it("leaves a proposal grounded in the workspace's own records unflagged", async () => {

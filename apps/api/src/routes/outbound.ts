@@ -306,8 +306,7 @@ export function registerOutboundRoutes(
               eq(emailDeliveries.workspaceId, request.params.id),
               eq(emailDeliveries.origin, "outbound_draft"),
             ),
-          )
-          .all())
+          ))
           .map((delivery) => delivery.originId),
       );
       const rows = await db
@@ -319,8 +318,7 @@ export function registerOutboundRoutes(
             eq(drafts.state, state),
             isNotNull(drafts.leadId),
           ),
-        )
-        .all();
+        );
 
       const lines = ["name,email,company,role,channel,content"];
       for (const row of rows) {

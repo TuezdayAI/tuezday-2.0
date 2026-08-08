@@ -17,10 +17,9 @@ import {
   type PreferenceEditSource,
   type TaskType,
 } from "@tuezday/contracts";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import { preferenceEdits, type PreferenceEditRow } from "../db/schema";
 import { normalizedEditDistance } from "./edit-distance";
-
 type PreferenceWriteDb = Pick<DbExecutor, "insert" | "select">;
 
 export function rowToPreferenceEdit(row: PreferenceEditRow): PreferenceEdit {
@@ -86,9 +85,8 @@ export async function capturePreferenceEdit(
     .values(row)
     .onConflictDoNothing({
       target: [preferenceEdits.workspaceId, preferenceEdits.source, preferenceEdits.sourceId],
-    })
-    .run();
-  if (inserted.changes === 0) return null;
+    });
+  if (rowsAffected(inserted) === 0) return null;
   return rowToPreferenceEdit(row);
 }
 
@@ -113,8 +111,7 @@ export async function listPreferenceEdits(
     .from(preferenceEdits)
     .where(and(eq(preferenceEdits.workspaceId, workspaceId), digestedFilter))
     .orderBy(desc(preferenceEdits.createdAt))
-    .limit(options.limit ?? 50)
-    .all())
+    .limit(options.limit ?? 50))
     .map(rowToPreferenceEdit);
 }
 
@@ -125,8 +122,7 @@ export async function listUndigestedEdits(db: Db, workspaceId: string, limit: nu
     .from(preferenceEdits)
     .where(and(eq(preferenceEdits.workspaceId, workspaceId), isNull(preferenceEdits.digestedAt)))
     .orderBy(asc(preferenceEdits.createdAt))
-    .limit(limit)
-    .all())
+    .limit(limit))
     .map(rowToPreferenceEdit);
 }
 
@@ -135,11 +131,10 @@ export async function getPreferenceEdit(
   workspaceId: string,
   editId: string,
 ): Promise<PreferenceEdit | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(preferenceEdits)
-    .where(and(eq(preferenceEdits.workspaceId, workspaceId), eq(preferenceEdits.id, editId)))
-    .get();
+    .where(and(eq(preferenceEdits.workspaceId, workspaceId), eq(preferenceEdits.id, editId))))[0];
   return row ? rowToPreferenceEdit(row) : undefined;
 }
 
@@ -152,7 +147,6 @@ export async function markEditsDigested(db: Db, editIds: string[], now = Date.no
   for (const editId of editIds) {
     await db.update(preferenceEdits)
       .set({ digestedAt: now })
-      .where(eq(preferenceEdits.id, editId))
-      .run();
+      .where(eq(preferenceEdits.id, editId));
   }
 }

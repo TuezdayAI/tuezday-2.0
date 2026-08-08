@@ -142,8 +142,7 @@ export async function persistLaneEligibility(
     })
     .from(campaignLaneRevisions)
     .innerJoin(campaignLanes, eq(campaignLaneRevisions.laneId, campaignLanes.id))
-    .where(eq(campaignLaneRevisions.planRevisionId, pkg.planRevisionId))
-    .all();
+    .where(eq(campaignLaneRevisions.planRevisionId, pkg.planRevisionId));
   if (lanes.length === 0) return [];
 
   // §9.5 rule 5: has any *other* package in this campaign already earned an
@@ -167,17 +166,15 @@ export async function persistLaneEligibility(
             lanes.map((lane) => lane.laneId),
           ),
         ),
-      )
-      .all())
+      ))
       .map((row) => row.laneId),
   );
 
   const suggestedPersonaId = pkg.opportunityId
-    ? ((await tx
+    ? (((await tx
         .select({ value: campaignOpportunities.suggestedPersonaId })
         .from(campaignOpportunities)
-        .where(eq(campaignOpportunities.id, pkg.opportunityId))
-        .get())?.value ?? null)
+        .where(eq(campaignOpportunities.id, pkg.opportunityId)))[0])?.value ?? null)
     : null;
 
   const assessmentView = {
@@ -209,8 +206,7 @@ export async function persistLaneEligibility(
         evaluatorVersion: LANE_ELIGIBILITY_EVALUATOR_VERSION,
         createdAt: now,
       })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
   }
   return evaluations;
 }

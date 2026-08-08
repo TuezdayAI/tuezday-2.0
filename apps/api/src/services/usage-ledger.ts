@@ -40,17 +40,15 @@ export async function recordLlmUsage(db: Db, event: LlmUsageEventInput): Promise
       cachedTokens: event.usage.cachedTokens,
       costCents: event.costCentsOverride ?? costCents(event.model, event.usage),
       createdAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 /** Rolling-window spend in cents — the number the budget gate compares. */
 export async function sumLlmSpendCents(db: Db, workspaceId: string, sinceMs: number): Promise<number> {
-  const row = await db
+  const row = (await db
     .select({ total: sql<number>`coalesce(sum(${llmUsageEvents.costCents}), 0)` })
     .from(llmUsageEvents)
-    .where(and(eq(llmUsageEvents.workspaceId, workspaceId), gte(llmUsageEvents.createdAt, sinceMs)))
-    .get();
+    .where(and(eq(llmUsageEvents.workspaceId, workspaceId), gte(llmUsageEvents.createdAt, sinceMs))))[0];
   return row?.total ?? 0;
 }
 
@@ -76,8 +74,7 @@ export async function spendRollup(db: Db, workspaceId: string, sinceMs: number):
     })
     .from(llmUsageEvents)
     .where(and(eq(llmUsageEvents.workspaceId, workspaceId), gte(llmUsageEvents.createdAt, sinceMs)))
-    .groupBy(llmUsageEvents.pipeline)
-    .all();
+    .groupBy(llmUsageEvents.pipeline);
 
   const byPipeline = rows
     .map((r) => ({

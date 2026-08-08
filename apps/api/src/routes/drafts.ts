@@ -74,11 +74,10 @@ export function registerDraftRoutes(
     "/workspaces/:id/generations/:generationId/submit",
     async (request, reply) => {
       if (!await workspaceOr404(db, request.params.id, reply)) return reply;
-      const generation = await db
+      const generation = (await db
         .select()
         .from(generations)
-        .where(eq(generations.id, request.params.generationId))
-        .get();
+        .where(eq(generations.id, request.params.generationId)))[0];
       if (!generation || generation.workspaceId !== request.params.id) {
         return reply.status(404).send({ error: "generation_not_found" });
       }

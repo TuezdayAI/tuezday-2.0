@@ -31,8 +31,7 @@ export async function listPersonaSocialAccounts(
         eq(personaSocialAccounts.workspaceId, workspaceId),
         eq(personaSocialAccounts.personaId, personaId),
       ),
-    )
-    .all())
+    ))
     .map(rowToAssignment);
 }
 
@@ -52,8 +51,7 @@ async function demotePrimary(
         eq(personaSocialAccounts.providerKey, providerKey),
         eq(personaSocialAccounts.channel, channel),
       ),
-    )
-    .run();
+    );
 }
 
 export type AssignmentResult =
@@ -86,7 +84,7 @@ export async function createPersonaSocialAccount(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(personaSocialAccounts).values(row).run();
+  await db.insert(personaSocialAccounts).values(row);
   return { ok: true, assignment: rowToAssignment(row) };
 }
 
@@ -97,7 +95,7 @@ export async function updatePersonaSocialAccount(
   assignmentId: string,
   input: UpsertPersonaSocialAccountInput,
 ): Promise<AssignmentResult | { ok: false; error: "assignment_not_found" }> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(personaSocialAccounts)
     .where(
@@ -106,8 +104,7 @@ export async function updatePersonaSocialAccount(
         eq(personaSocialAccounts.personaId, personaId),
         eq(personaSocialAccounts.id, assignmentId),
       ),
-    )
-    .get();
+    ))[0];
   if (!existing) return { ok: false, error: "assignment_not_found" };
   const connection = await getConnection(db, workspaceId, input.connectionId);
   if (!connection) return { ok: false, error: "connection_not_found" };
@@ -131,8 +128,7 @@ export async function updatePersonaSocialAccount(
         eq(personaSocialAccounts.personaId, personaId),
         eq(personaSocialAccounts.id, assignmentId),
       ),
-    )
-    .run();
+    );
   return {
     ok: true,
     assignment: (await listPersonaSocialAccounts(db, workspaceId, personaId)).find((a) => a.id === assignmentId)!,
@@ -145,7 +141,7 @@ export async function deletePersonaSocialAccount(
   personaId: string,
   assignmentId: string,
 ): Promise<boolean> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(personaSocialAccounts)
     .where(
@@ -154,8 +150,7 @@ export async function deletePersonaSocialAccount(
         eq(personaSocialAccounts.personaId, personaId),
         eq(personaSocialAccounts.id, assignmentId),
       ),
-    )
-    .get();
+    ))[0];
   if (!existing) return false;
   await db.delete(personaSocialAccounts)
     .where(
@@ -164,8 +159,7 @@ export async function deletePersonaSocialAccount(
         eq(personaSocialAccounts.personaId, personaId),
         eq(personaSocialAccounts.id, assignmentId),
       ),
-    )
-    .run();
+    );
   return true;
 }
 

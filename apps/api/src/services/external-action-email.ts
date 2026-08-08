@@ -91,12 +91,12 @@ async function emailIntent(
   let threadId: string | undefined;
 
   if (origin === "launch_message") {
-    const message = await db.select().from(launchMessages).where(and(
+    const message = (await db.select().from(launchMessages).where(and(
       eq(launchMessages.workspaceId, workspaceId),
       eq(launchMessages.id, originId),
-    )).get();
+    )))[0];
     if (!message?.draftId || message.channel !== "email") throw new Error("Email launch message not found.");
-    const launch = await db.select().from(launches).where(eq(launches.id, message.launchId)).get();
+    const launch = (await db.select().from(launches).where(eq(launches.id, message.launchId)))[0];
     if (!launch) throw new Error("Launch not found.");
     draftId = message.draftId;
     recipient = message.recipientEmail;
@@ -104,18 +104,18 @@ async function emailIntent(
     campaignId = launch.campaignId;
     personaId = launch.personaId;
   } else if (origin === "outreach_step") {
-    const message = await db.select().from(outreachMessages).where(and(
+    const message = (await db.select().from(outreachMessages).where(and(
       eq(outreachMessages.workspaceId, workspaceId),
       eq(outreachMessages.id, originId),
-    )).get();
+    )))[0];
     if (!message?.draftId) throw new Error("Outreach step message not found.");
-    const enrollment = await db.select().from(outreachEnrollments).where(
+    const enrollment = (await db.select().from(outreachEnrollments).where(
       eq(outreachEnrollments.id, message.enrollmentId),
-    ).get();
+    ))[0];
     if (!enrollment) throw new Error("Outreach enrollment not found.");
-    const sequence = await db.select().from(outreachSequences).where(
+    const sequence = (await db.select().from(outreachSequences).where(
       eq(outreachSequences.id, enrollment.sequenceId),
-    ).get();
+    ))[0];
     if (!sequence) throw new Error("Outreach sequence not found.");
     draftId = message.draftId;
     recipient = enrollment.recipientEmail;
@@ -125,16 +125,16 @@ async function emailIntent(
     threadId = enrollment.lastThreadId ?? undefined;
   } else {
     draftId = originId;
-    const draft = await db.select().from(drafts).where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))).get();
+    const draft = (await db.select().from(drafts).where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))))[0];
     if (!draft) throw new Error("Email draft not found.");
     if (origin === "outbound_draft") {
-      const lead = draft.leadId ? await db.select().from(leads).where(eq(leads.id, draft.leadId)).get() : undefined;
+      const lead = draft.leadId ? (await db.select().from(leads).where(eq(leads.id, draft.leadId)))[0] : undefined;
       if (!lead) throw new Error("The draft is not linked to a lead.");
       recipient = lead.email;
       recipientName = lead.name || lead.email;
     } else {
       const contact = draft.mediaContactId
-        ? await db.select().from(mediaContacts).where(eq(mediaContacts.id, draft.mediaContactId)).get()
+        ? (await db.select().from(mediaContacts).where(eq(mediaContacts.id, draft.mediaContactId)))[0]
         : undefined;
       if (!contact) throw new Error("The draft is not linked to a media contact.");
       recipient = contact.email;
@@ -144,14 +144,14 @@ async function emailIntent(
     personaId = draft.personaId;
   }
 
-  const draft = await db.select().from(drafts).where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))).get();
+  const draft = (await db.select().from(drafts).where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))))[0];
   const expectedDraftChannel = origin === "pr_draft" ? "pr" : "email";
   if (!draft || draft.state !== "approved" || draft.channel !== expectedDraftChannel) {
     throw new Error("An approved email draft is required.");
   }
   const content = parseEmailContent(draft.content);
-  const campaign = campaignId ? await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get() : undefined;
-  const persona = personaId ? await db.select().from(personas).where(eq(personas.id, personaId)).get() : undefined;
+  const campaign = campaignId ? (await db.select().from(campaigns).where(eq(campaigns.id, campaignId)))[0] : undefined;
+  const persona = personaId ? (await db.select().from(personas).where(eq(personas.id, personaId)))[0] : undefined;
 
   // Sender identity: a connected Gmail mailbox (Sprint 47) or the workspace's
   // verified Resend sender — the two send paths coexist.
@@ -169,7 +169,7 @@ async function emailIntent(
     connectionId = mailbox.connectionId;
     connectionName = `Gmail mailbox ${mailbox.address}`;
   } else {
-    const sender = await db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).get();
+    const sender = (await db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, workspaceId)))[0];
     from = sender ? `${sender.fromName} <${sender.fromAddress}>` : "Unconfigured sender <missing@example.invalid>";
     senderAddress = sender?.fromAddress ?? "missing@example.invalid";
     replyTo = sender?.replyTo ?? null;
@@ -235,7 +235,7 @@ export async function prepareEmailAction(
 }
 
 async function blocker(db: Db, action: ExternalAction, payload: EmailActionPayload): Promise<ExternalActionBlocker | null> {
-  const sender = await db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, action.workspaceId)).get();
+  const sender = (await db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, action.workspaceId)))[0];
   if (!sender || sender.status !== "verified") {
     return { code: "sender_unverified", message: "Verify the workspace email sender before sending.", retryable: true };
   }
@@ -402,23 +402,20 @@ async function resolveTrackingConfig(
   deliveryId: string,
 ): Promise<TrackingConfig | undefined> {
   if (payload.origin !== "outreach_step") return undefined;
-  const message = await db
+  const message = (await db
     .select({ enrollmentId: outreachMessages.enrollmentId })
     .from(outreachMessages)
-    .where(and(eq(outreachMessages.workspaceId, workspaceId), eq(outreachMessages.id, payload.originId)))
-    .get();
+    .where(and(eq(outreachMessages.workspaceId, workspaceId), eq(outreachMessages.id, payload.originId))))[0];
   if (!message) return undefined;
-  const enrollment = await db
+  const enrollment = (await db
     .select({ sequenceId: outreachEnrollments.sequenceId })
     .from(outreachEnrollments)
-    .where(eq(outreachEnrollments.id, message.enrollmentId))
-    .get();
+    .where(eq(outreachEnrollments.id, message.enrollmentId)))[0];
   if (!enrollment) return undefined;
-  const sequence = await db
+  const sequence = (await db
     .select({ trackOpens: outreachSequences.trackOpens, trackClicks: outreachSequences.trackClicks })
     .from(outreachSequences)
-    .where(eq(outreachSequences.id, enrollment.sequenceId))
-    .get();
+    .where(eq(outreachSequences.id, enrollment.sequenceId)))[0];
   if (!sequence) return undefined;
   return {
     deliveryId,
@@ -439,7 +436,7 @@ async function markLaunchMessageAccepted(
   sentAt: number,
 ): Promise<void> {
   if (payload.origin !== "launch_message") return;
-  const message = await db.select({
+  const message = (await db.select({
     launchId: launchMessages.launchId,
     sequenceRecipientId: launchMessages.sequenceRecipientId,
   }).from(launchMessages).where(
@@ -447,7 +444,7 @@ async function markLaunchMessageAccepted(
       eq(launchMessages.workspaceId, workspaceId),
       eq(launchMessages.id, payload.originId),
     ),
-  ).get();
+  ))[0];
   if (!message) return;
   await db.update(launchMessages)
     .set({
@@ -462,23 +459,20 @@ async function markLaunchMessageAccepted(
         eq(launchMessages.workspaceId, workspaceId),
         eq(launchMessages.id, payload.originId),
       ),
-    )
-    .run();
+    );
   if (message.sequenceRecipientId) return;
-  const pending = await db.select({ id: launchMessages.id })
+  const pending = (await db.select({ id: launchMessages.id })
     .from(launchMessages)
     .where(
       and(
         eq(launchMessages.launchId, message.launchId),
         eq(launchMessages.status, "pending"),
       ),
-    )
-    .get();
+    ))[0];
   if (!pending) {
     await db.update(launches)
       .set({ status: "completed", updatedAt: Date.now() })
-      .where(eq(launches.id, message.launchId))
-      .run();
+      .where(eq(launches.id, message.launchId));
   }
 }
 
@@ -496,11 +490,10 @@ async function markOutreachStepAccepted(
   sentAt: number,
 ): Promise<void> {
   if (payload.origin !== "outreach_step") return;
-  const delivery = await db
+  const delivery = (await db
     .select({ providerThreadId: emailDeliveries.providerThreadId })
     .from(emailDeliveries)
-    .where(eq(emailDeliveries.externalActionId, actionId))
-    .get();
+    .where(eq(emailDeliveries.externalActionId, actionId)))[0];
   await db.update(outreachMessages)
     .set({
       externalActionId: actionId,
@@ -515,8 +508,7 @@ async function markOutreachStepAccepted(
         eq(outreachMessages.workspaceId, workspaceId),
         eq(outreachMessages.id, payload.originId),
       ),
-    )
-    .run();
+    );
 }
 
 export function emailActionAdapter(
@@ -557,12 +549,12 @@ export function emailActionAdapter(
       } else if (!provider) {
         throw new Error("Native email is not configured on this deployment.");
       }
-      let delivery = await db.select().from(emailDeliveries).where(eq(emailDeliveries.externalActionId, action.id)).get();
+      let delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.externalActionId, action.id)))[0];
       if (delivery?.providerMessageId) {
         if (delivery.status === "queued") {
           const now = Date.now();
-          await db.update(emailDeliveries).set({ status: "accepted", acceptedAt: delivery.acceptedAt ?? now, updatedAt: now }).where(eq(emailDeliveries.id, delivery.id)).run();
-          delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get())!;
+          await db.update(emailDeliveries).set({ status: "accepted", acceptedAt: delivery.acceptedAt ?? now, updatedAt: now }).where(eq(emailDeliveries.id, delivery.id));
+          delivery = ((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)))[0])!;
         }
         await markLaunchMessageAccepted(
           db,
@@ -606,10 +598,10 @@ export function emailActionAdapter(
           lastError: null,
           createdAt: now,
           updatedAt: now,
-        }).run();
-        delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, id)).get())!;
+        });
+        delivery = ((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, id)))[0])!;
         if (payload.origin === "launch_message") {
-          await db.update(launchMessages).set({ externalActionId: action.id, updatedAt: now }).where(eq(launchMessages.id, payload.originId)).run();
+          await db.update(launchMessages).set({ externalActionId: action.id, updatedAt: now }).where(eq(launchMessages.id, payload.originId));
         }
       }
       if (payload.mailboxId) {
@@ -648,10 +640,10 @@ export function emailActionAdapter(
           acceptedAt,
           lastError: null,
           updatedAt: acceptedAt,
-        }).where(eq(emailDeliveries.id, delivery.id)).run();
+        }).where(eq(emailDeliveries.id, delivery.id));
         await markLaunchMessageAccepted(db, action.workspaceId, payload, action.id, acceptedAt);
         await markOutreachStepAccepted(db, action.workspaceId, payload, action.id, acceptedAt);
-        return receipt((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get())!);
+        return receipt(((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)))[0])!);
       }
       const accepted = await provider!.send({
         from: payload.from,
@@ -668,7 +660,7 @@ export function emailActionAdapter(
         acceptedAt: accepted.acceptedAt,
         lastError: null,
         updatedAt: Date.now(),
-      }).where(eq(emailDeliveries.id, delivery.id)).run();
+      }).where(eq(emailDeliveries.id, delivery.id));
       await markLaunchMessageAccepted(
         db,
         action.workspaceId,
@@ -676,7 +668,7 @@ export function emailActionAdapter(
         action.id,
         accepted.acceptedAt,
       );
-      return receipt((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get())!);
+      return receipt(((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)))[0])!);
     },
   };
 }

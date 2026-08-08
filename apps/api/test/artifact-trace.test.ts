@@ -98,8 +98,7 @@ async function seedDraft(db: Db, overrides: Record<string, unknown> = {}) {
       provider: "google",
       durationMs: 900,
       createdAt: 20,
-    })
-    .run();
+    });
   await db.insert(drafts)
     .values({
       id: DRAFT_ID,
@@ -115,18 +114,16 @@ async function seedDraft(db: Db, overrides: Record<string, unknown> = {}) {
       createdAt: 21,
       updatedAt: 21,
       ...overrides,
-    })
-    .run();
+    });
 }
 
 describe("the why-this trace (Sprint 71 acceptance)", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 });
     await db.insert(signals)
       .values({
         id: SIGNAL_ID,
@@ -135,8 +132,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         source: "reddit",
         sourceUrl: "https://example.test/thread",
         createdAt: 10,
-      })
-      .run();
+      });
   });
 
   it("answers 'why did it write this?' from the draft alone", async () => {
@@ -189,8 +185,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         appliedCount: 1,
         createdAt: 5,
         updatedAt: 5,
-      })
-      .run();
+      });
     const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.preferences[0]!.ruleId).toBe(RULE_ID);
     expect(trace.preferences[0]!.confidence).toBe(80);
@@ -225,8 +220,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         durationMs: 400,
         createdAt: 30,
         completedAt: 31,
-      })
-      .run();
+      });
     const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     // The words on screen came from the revision, so its context is the honest
     // answer — showing the original would explain text nobody can see.
@@ -253,8 +247,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         status: "active",
         createdAt: 5,
         updatedAt: 5,
-      })
-      .run();
+      });
     await seedDraft(db, { campaignId: CAMPAIGN_ID });
     const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.plan!.campaignName).toBe("Pricing rewrite");
@@ -278,8 +271,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         status: "connected",
         createdAt: 5,
         updatedAt: 5,
-      })
-      .run();
+      });
     const publicationId = randomUUID();
     await db.insert(publications)
       .values({
@@ -294,8 +286,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         scheduledFor: 100,
         createdAt: 40,
         updatedAt: 40,
-      })
-      .run();
+      });
     const trace = artifactTraceSchema.parse(
       await buildArtifactTrace(db, WORKSPACE_ID, "publication", publicationId),
     );
@@ -325,8 +316,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         proposedByLabel: "founder",
         createdAt: 50,
         updatedAt: 50,
-      })
-      .run();
+      });
     const trace = artifactTraceSchema.parse(
       await buildArtifactTrace(db, WORKSPACE_ID, "external_action", actionId),
     );
@@ -356,8 +346,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         proposedByLabel: "agent",
         createdAt: 50,
         updatedAt: 50,
-      })
-      .run();
+      });
     const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "external_action", actionId))!;
     expect(trace.subject.kind).toBe("external_action");
     expect(trace.context.length).toBeGreaterThan(0);
@@ -378,8 +367,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         state: "draft",
         createdAt: 21,
         updatedAt: 21,
-      })
-      .run();
+      });
     const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.context).toHaveLength(0);
     expect(trace.contextReason).toContain("outside the generation path");
@@ -392,7 +380,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
   it("returns nothing for a subject in another workspace", async () => {
     await seedDraft(db);
     const other = randomUUID();
-    await db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 }).run();
+    await db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 });
     expect(await buildArtifactTrace(db, other, "draft", DRAFT_ID)).toBeUndefined();
     expect(await buildArtifactTrace(db, WORKSPACE_ID, "draft", randomUUID())).toBeUndefined();
   });

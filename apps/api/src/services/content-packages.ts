@@ -20,7 +20,7 @@ import {
   type PackageStatus,
   type SufficiencyAssessment,
 } from "@tuezday/contracts";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   campaignLaneRevisions,
   campaignLanes,
@@ -79,8 +79,7 @@ export async function noveltyFor(
         eq(contentPackages.campaignId, campaignId),
         gte(contentPackages.createdAt, now - PACKAGE_NOVELTY_WINDOW_DAYS * DAY_MS),
       ),
-    )
-    .all();
+    );
   const tokens = tokenize(angle);
   let maxOverlap = 0;
   for (const row of recent) {
@@ -117,8 +116,7 @@ export async function insertPackageEvent(
       actorUserId: input.actorUserId ?? null,
       reason: input.reason ?? null,
       createdAt: input.createdAt,
-    })
-    .run();
+    });
 }
 
 /**
@@ -136,7 +134,7 @@ export async function createPackageFromOpportunity(
 ): Promise<string> {
   const now = Date.now();
   return await db.transaction(async (tx) => {
-    const opportunity = await tx
+    const opportunity = (await tx
       .select()
       .from(campaignOpportunities)
       .where(
@@ -144,8 +142,7 @@ export async function createPackageFromOpportunity(
           eq(campaignOpportunities.id, opportunityId),
           eq(campaignOpportunities.workspaceId, workspaceId),
         ),
-      )
-      .get();
+      ))[0];
     if (!opportunity) throw new OpportunityNotFoundError();
     const from = opportunity.status as OpportunityStatus;
     if (!canTransitionOpportunity(from, "package_created")) {
@@ -165,9 +162,8 @@ export async function createPackageFromOpportunity(
           eq(campaignOpportunities.id, opportunityId),
           eq(campaignOpportunities.status, from),
         ),
-      )
-      .run();
-    if (fenced.changes !== 1) {
+      );
+    if (rowsAffected(fenced) !== 1) {
       throw new InvalidOpportunityTransitionError(from, "package_created");
     }
     await tx.insert(campaignOpportunityEvents)
@@ -180,8 +176,7 @@ export async function createPackageFromOpportunity(
         actorUserId: actor.userId,
         reason: "package created",
         createdAt: now,
-      })
-      .run();
+      });
 
     const packageId = randomUUID();
     const novelty = await noveltyFor(
@@ -208,17 +203,15 @@ export async function createPackageFromOpportunity(
         createdByUserId: actor.userId,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     // Trigger source: the canonical story, snapshotted so later mutation or
     // deletion never destroys provenance (design §1.3).
     if (opportunity.canonicalStoryId) {
-      const story = await tx
+      const story = (await tx
         .select()
         .from(canonicalExternalStories)
-        .where(eq(canonicalExternalStories.id, opportunity.canonicalStoryId))
-        .get();
+        .where(eq(canonicalExternalStories.id, opportunity.canonicalStoryId)))[0];
       if (story) {
         const context = await loadStoryRoutingContext(tx, story);
         await tx.insert(packageSources)
@@ -237,8 +230,7 @@ export async function createPackageFromOpportunity(
               capturedAt: now,
             }),
             createdAt: now,
-          })
-          .run();
+          });
       }
     }
 
@@ -257,11 +249,10 @@ export async function createPackageFromOpportunity(
       }
     }
     for (const [occurrenceId, citedBy] of claimsByOccurrence) {
-      const occurrence = await tx
+      const occurrence = (await tx
         .select()
         .from(discoverySourceOccurrences)
-        .where(eq(discoverySourceOccurrences.id, occurrenceId))
-        .get();
+        .where(eq(discoverySourceOccurrences.id, occurrenceId)))[0];
       if (!occurrence) continue;
       await tx.insert(packageSources)
         .values({
@@ -282,8 +273,7 @@ export async function createPackageFromOpportunity(
             capturedAt: now,
           }),
           createdAt: now,
-        })
-        .run();
+        });
     }
 
     await insertPackageEvent(tx, {
@@ -379,14 +369,12 @@ export async function listPackages(
     .where(where)
     .orderBy(desc(contentPackages.createdAt), asc(contentPackages.id))
     .limit(limit)
-    .offset(offset)
-    .all();
+    .offset(offset);
   const total =
-    (await db
+    ((await db
       .select({ n: sql<number>`COUNT(*)` })
       .from(contentPackages)
-      .where(where)
-      .get())?.n ?? 0;
+      .where(where))[0])?.n ?? 0;
   return { packages: rows.map(projectPackage), total };
 }
 
@@ -415,8 +403,7 @@ async function sourceRows(db: DbExecutor, packageId: string): Promise<PackageSou
     .select()
     .from(packageSources)
     .where(eq(packageSources.packageId, packageId))
-    .orderBy(asc(packageSources.createdAt), asc(packageSources.id))
-    .all())
+    .orderBy(asc(packageSources.createdAt), asc(packageSources.id)))
     .map((row) =>
       packageSourceSchema.parse({
         id: row.id,
@@ -457,8 +444,7 @@ async function eligibilityRows(
     .orderBy(
       asc(laneEligibilityDecisions.createdAt),
       asc(laneEligibilityDecisions.id),
-    )
-    .all())
+    ))
     .map((row) =>
       laneEligibilityDecisionSchema.parse({
         id: row.decision.id,
@@ -487,8 +473,7 @@ async function eventRows(db: DbExecutor, packageId: string): Promise<PackageEven
       // Creation (fromStatus null) precedes same-millisecond dispositions.
       sql`${contentPackageEvents.fromStatus} IS NOT NULL`,
       asc(contentPackageEvents.id),
-    )
-    .all())
+    ))
     .map((row) =>
       packageEventSchema.parse({
         id: row.id,
@@ -506,21 +491,19 @@ export async function getPackageDetail(
   workspaceId: string,
   packageId: string,
 ): Promise<PackageDetail> {
-  const row = await joinedSelect(db)
+  const row = (await joinedSelect(db)
     .where(
       and(
         eq(contentPackages.id, packageId),
         eq(contentPackages.workspaceId, workspaceId),
       ),
-    )
-    .get();
+    ))[0];
   if (!row) throw new PackageNotFoundError();
   const assessments = (await db
     .select()
     .from(sufficiencyAssessments)
     .where(eq(sufficiencyAssessments.packageId, packageId))
-    .orderBy(desc(sufficiencyAssessments.assessmentVersion))
-    .all())
+    .orderBy(desc(sufficiencyAssessments.assessmentVersion)))
     .map(projectAssessment);
   return {
     package: projectPackage(row),
@@ -547,7 +530,7 @@ export async function decidePackage(
   },
 ): Promise<PackageDetail> {
   await db.transaction(async (tx) => {
-    const row = await tx
+    const row = (await tx
       .select()
       .from(contentPackages)
       .where(
@@ -555,8 +538,7 @@ export async function decidePackage(
           eq(contentPackages.id, packageId),
           eq(contentPackages.workspaceId, workspaceId),
         ),
-      )
-      .get();
+      ))[0];
     if (!row) throw new PackageNotFoundError();
     const from = row.status as PackageStatus;
     const to = PACKAGE_DECISION_TARGETS[input.action];
@@ -582,8 +564,7 @@ export async function decidePackage(
           : {}),
         updatedAt: now,
       })
-      .where(eq(contentPackages.id, packageId))
-      .run();
+      .where(eq(contentPackages.id, packageId));
     await insertPackageEvent(tx, {
       workspaceId,
       packageId,

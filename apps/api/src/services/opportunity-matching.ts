@@ -9,7 +9,7 @@ import {
   type OpportunityPolicy,
   type OpportunityStatus,
 } from "@tuezday/contracts";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   campaignOpportunities,
   campaignOpportunityEvents,
@@ -29,7 +29,6 @@ import { clampScore } from "./matching";
 import { currentRoutingProfiles, latestProfileFingerprints } from "./routing-profiles";
 import { DATABASE_NOW_MS } from "./task-leases";
 import { getWorkspace } from "./workspaces";
-
 /** Stage-1 boundary (design §9.1): normally three candidate campaigns. */
 export const OPPORTUNITY_CANDIDATE_LIMIT = 3;
 /** Consecutive retryable failures for one fingerprint before `failed`. */
@@ -172,8 +171,7 @@ export async function deriveWorkspaceProfilesDigest(
     .where(
       and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")),
     )
-    .orderBy(asc(campaigns.id))
-    .all();
+    .orderBy(asc(campaigns.id));
   const eligible = rows.filter(
     (row) =>
       row.routingBand !== "off" &&
@@ -195,13 +193,12 @@ export async function deriveStoryRoutingFingerprint(
   story: { id: string; contentFingerprint: string },
   profilesDigest: string,
 ): Promise<string> {
-  const enrichment = await db
+  const enrichment = (await db
     .select({ storyFingerprint: storyEnrichments.storyFingerprint })
     .from(storyEnrichments)
     .where(eq(storyEnrichments.storyId, story.id))
     .orderBy(desc(storyEnrichments.createdAt))
-    .limit(1)
-    .get();
+    .limit(1))[0];
   return createHash("sha256")
     .update(
       JSON.stringify({
@@ -237,8 +234,7 @@ export async function loadStoryRoutingContext(
         sql`${storyOccurrences.detachedAt} IS NULL`,
       ),
     )
-    .orderBy(asc(discoverySourceOccurrences.observedAt))
-    .all();
+    .orderBy(asc(discoverySourceOccurrences.observedAt));
   const excerpt = members.find((m) => m.excerpt !== "")?.excerpt ?? "";
   const titleVariants = [
     ...new Set(members.map((m) => m.title).filter((title) => title !== story.title)),
@@ -285,8 +281,7 @@ export async function claimRoutingBatch(
       .select()
       .from(canonicalExternalStories)
       .where(dueWhere(input.workspaceId))
-      .orderBy(asc(canonicalExternalStories.createdAt), asc(canonicalExternalStories.id))
-      .all();
+      .orderBy(asc(canonicalExternalStories.createdAt), asc(canonicalExternalStories.id));
     for (const story of candidates) {
       if (claims.length >= input.limit) break;
       let digest = digests.get(story.workspaceId);
@@ -316,9 +311,8 @@ export async function claimRoutingBatch(
             eq(canonicalExternalStories.routingState, story.routingState),
             eq(canonicalExternalStories.updatedAt, story.updatedAt),
           ),
-        )
-        .run();
-      if (claimed.changes !== 1) continue;
+        );
+      if (rowsAffected(claimed) !== 1) continue;
       claims.push({ storyId: story.id, workspaceId: story.workspaceId, fingerprint });
     }
     return claims;
@@ -327,7 +321,7 @@ export async function claimRoutingBatch(
 
 export async function markRoutingRetryable(db: Db, claim: StoryRoutingClaim): Promise<boolean> {
   return await db.transaction(async (tx) => {
-    const story = await tx
+    const story = (await tx
       .select()
       .from(canonicalExternalStories)
       .where(
@@ -336,8 +330,7 @@ export async function markRoutingRetryable(db: Db, claim: StoryRoutingClaim): Pr
           eq(canonicalExternalStories.routingState, "in_progress"),
           eq(canonicalExternalStories.routingFingerprint, claim.fingerprint),
         ),
-      )
-      .get();
+      ))[0];
     if (!story) return false;
     const attempts = story.routingAttempts + 1;
     await tx.update(canonicalExternalStories)
@@ -347,8 +340,7 @@ export async function markRoutingRetryable(db: Db, claim: StoryRoutingClaim): Pr
         routingLeaseExpiresAt: null,
         updatedAt: Date.now(),
       })
-      .where(eq(canonicalExternalStories.id, claim.storyId))
-      .run();
+      .where(eq(canonicalExternalStories.id, claim.storyId));
     return true;
   });
 }
@@ -524,8 +516,7 @@ async function insertOpportunityEvent(
       actorUserId: input.actorUserId ?? null,
       reason: input.reason ?? null,
       createdAt: input.createdAt,
-    })
-    .run();
+    });
 }
 
 /**
@@ -542,7 +533,7 @@ async function commitRoutingResult(
   const now = Date.now();
   try {
     return await db.transaction(async (tx) => {
-      const story = await tx
+      const story = (await tx
         .select()
         .from(canonicalExternalStories)
         .where(
@@ -552,8 +543,7 @@ async function commitRoutingResult(
             eq(canonicalExternalStories.routingState, "in_progress"),
             eq(canonicalExternalStories.routingFingerprint, claim.fingerprint),
           ),
-        )
-        .get();
+        ))[0];
       if (!story) throw new RoutingFenceError();
       const digest = await deriveWorkspaceProfilesDigest(tx, claim.workspaceId, now);
       if (await deriveStoryRoutingFingerprint(tx, story, digest) !== claim.fingerprint) {
@@ -563,8 +553,7 @@ async function commitRoutingResult(
             routingLeaseExpiresAt: null,
             updatedAt: now,
           })
-          .where(eq(canonicalExternalStories.id, claim.storyId))
-          .run();
+          .where(eq(canonicalExternalStories.id, claim.storyId));
         return { committed: false, opportunitiesCreated: 0 };
       }
 
@@ -586,13 +575,11 @@ async function commitRoutingResult(
               inArray(campaignOpportunities.status, [...OPEN_STATUSES]),
               sql`${campaignOpportunities.planRevisionId} != ${profile.planRevisionId}`,
             ),
-          )
-          .all();
+          );
         for (const row of stale) {
           await tx.update(campaignOpportunities)
             .set({ status: "superseded", updatedAt: now })
-            .where(eq(campaignOpportunities.id, row.id))
-            .run();
+            .where(eq(campaignOpportunities.id, row.id));
           await insertOpportunityEvent(tx, {
             workspaceId: claim.workspaceId,
             opportunityId: row.id,
@@ -610,7 +597,7 @@ async function commitRoutingResult(
         // must not pile up near-duplicate angles. Terminal rows (dismissed,
         // expired, superseded) do not block a fresh angle, and an identical
         // angle is blocked forever by the partial unique.
-        const open = await tx
+        const open = (await tx
           .select({ id: campaignOpportunities.id })
           .from(campaignOpportunities)
           .where(
@@ -620,8 +607,7 @@ async function commitRoutingResult(
               eq(campaignOpportunities.planRevisionId, profile.planRevisionId),
               inArray(campaignOpportunities.status, [...OPEN_STATUSES]),
             ),
-          )
-          .get();
+          ))[0];
         if (open) continue;
 
         const angle = entry.angle!.trim().slice(0, 300);
@@ -648,7 +634,7 @@ async function commitRoutingResult(
           profile.payload.personaIds.includes(entry.suggestedPersonaId)
             ? entry.suggestedPersonaId
             : null;
-        const inserted = await tx
+        const inserted = (await tx
           .insert(campaignOpportunities)
           .values({
             id: randomUUID(),
@@ -676,8 +662,7 @@ async function commitRoutingResult(
             updatedAt: now,
           })
           .onConflictDoNothing()
-          .returning({ id: campaignOpportunities.id })
-          .get();
+          .returning({ id: campaignOpportunities.id }))[0];
         if (!inserted) continue;
         opportunitiesCreated += 1;
         await insertOpportunityEvent(tx, {
@@ -713,9 +698,8 @@ async function commitRoutingResult(
             eq(canonicalExternalStories.routingState, "in_progress"),
             eq(canonicalExternalStories.routingFingerprint, claim.fingerprint),
           ),
-        )
-        .run();
-      if (updated.changes !== 1) throw new RoutingFenceError();
+        );
+      if (rowsAffected(updated) !== 1) throw new RoutingFenceError();
       return { committed: true, opportunitiesCreated };
     });
   } catch (error) {
@@ -740,13 +724,11 @@ export async function expireDueOpportunities(db: Db, workspaceId: string): Promi
           isNotNull(campaignOpportunities.expiresAt),
           lt(campaignOpportunities.expiresAt, now),
         ),
-      )
-      .all();
+      );
     for (const row of due) {
       await tx.update(campaignOpportunities)
         .set({ status: "expired", updatedAt: now })
-        .where(eq(campaignOpportunities.id, row.id))
-        .run();
+        .where(eq(campaignOpportunities.id, row.id));
       await insertOpportunityEvent(tx, {
         workspaceId,
         opportunityId: row.id,
@@ -804,11 +786,10 @@ export async function runOpportunityRouting(
       if (await markRoutingRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const story = await db
+    const story = (await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, claim.storyId))
-      .get();
+      .where(eq(canonicalExternalStories.id, claim.storyId)))[0];
     if (!story) continue;
     const context = await loadStoryRoutingContext(db, story);
     const candidates = selectCandidateProfiles(profiles, context.text, now);

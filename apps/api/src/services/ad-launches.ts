@@ -85,19 +85,17 @@ export async function listLaunches(db: Db, workspaceId: string): Promise<AdLaunc
     .leftJoin(adAccounts, eq(adLaunches.adAccountId, adAccounts.id))
     .leftJoin(drafts, eq(adLaunches.creativeDraftId, drafts.id))
     .where(eq(adLaunches.workspaceId, workspaceId))
-    .orderBy(desc(adLaunches.createdAt))
-    .all();
+    .orderBy(desc(adLaunches.createdAt));
   return rows.map(({ launch, account, draft }) =>
     withContext(launch, account ?? undefined, draft?.content),
   );
 }
 
 export async function getLaunch(db: Db, workspaceId: string, launchId: string): Promise<AdLaunch | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(adLaunches)
-    .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.id, launchId)))
-    .get();
+    .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.id, launchId))))[0];
   return row ? rowToLaunch(row) : undefined;
 }
 
@@ -106,13 +104,12 @@ export async function getLaunchWithContext(
   workspaceId: string,
   launchId: string,
 ): Promise<AdLaunchWithContext | undefined> {
-  const row = await db
+  const row = (await db
     .select({ launch: adLaunches, account: adAccounts, draft: drafts })
     .from(adLaunches)
     .leftJoin(adAccounts, eq(adLaunches.adAccountId, adAccounts.id))
     .leftJoin(drafts, eq(adLaunches.creativeDraftId, drafts.id))
-    .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.id, launchId)))
-    .get();
+    .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.id, launchId))))[0];
   return row ? withContext(row.launch, row.account ?? undefined, row.draft?.content) : undefined;
 }
 
@@ -153,7 +150,7 @@ export async function createLaunch(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(adLaunches).values(row).run();
+  await db.insert(adLaunches).values(row);
   return rowToLaunch(row);
 }
 
@@ -179,7 +176,7 @@ export async function updateLaunch(
   if (patch.countries !== undefined) set.countriesJson = JSON.stringify(patch.countries);
   if (patch.ageMin !== undefined) set.ageMin = patch.ageMin;
   if (patch.ageMax !== undefined) set.ageMax = patch.ageMax;
-  await db.update(adLaunches).set(set).where(eq(adLaunches.id, launch.id)).run();
+  await db.update(adLaunches).set(set).where(eq(adLaunches.id, launch.id));
   return (await getLaunch(db, launch.workspaceId, launch.id))!;
 }
 
@@ -196,12 +193,11 @@ export async function persistLaunchTargeting(
       ageMax: targeting.ageMax,
       updatedAt: Date.now(),
     })
-    .where(eq(adLaunches.id, launchId))
-    .run();
+    .where(eq(adLaunches.id, launchId));
 }
 
 export async function deleteLaunch(db: Db, launchId: string): Promise<void> {
-  await db.delete(adLaunches).where(eq(adLaunches.id, launchId)).run();
+  await db.delete(adLaunches).where(eq(adLaunches.id, launchId));
 }
 
 /**
@@ -240,8 +236,7 @@ export async function recordSetupGateDecision(
       actor: actor.label,
       actorId: actor.userId,
       createdAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 /**
@@ -255,8 +250,7 @@ export async function listSetupGateDecisions(db: Db, launchId: string): Promise<
     .select()
     .from(adLaunchDecisions)
     .where(eq(adLaunchDecisions.launchId, launchId))
-    .orderBy(asc(adLaunchDecisions.createdAt))
-    .all())
+    .orderBy(asc(adLaunchDecisions.createdAt)))
     .map((row) => ({
       ...row,
       action: row.action as AdLaunchDecisionAction,
@@ -308,8 +302,7 @@ export async function applyLaunchAction(
   if (!toState) throw new InvalidLaunchTransitionError(launch.status, action);
   await db.update(adLaunches)
     .set({ status: toState, updatedAt: Date.now() })
-    .where(eq(adLaunches.id, launch.id))
-    .run();
+    .where(eq(adLaunches.id, launch.id));
   await recordSetupGateDecision(db, launch, actor, action, launch.status, toState);
   return { ...launch, status: toState };
 }
@@ -319,7 +312,7 @@ export async function applyLaunchAction(
 // ---------------------------------------------------------------------------
 
 export async function getAdSettings(db: Db, workspaceId: string): Promise<AdSettings> {
-  const row = await db.select().from(adSettings).where(eq(adSettings.workspaceId, workspaceId)).get();
+  const row = (await db.select().from(adSettings).where(eq(adSettings.workspaceId, workspaceId)))[0];
   return row
     ? { workspaceId, dailyCapCents: row.dailyCapCents, killSwitch: row.killSwitch === 1, updatedAt: row.updatedAt }
     : { workspaceId, dailyCapCents: 5000, killSwitch: false, updatedAt: 0 };
@@ -346,8 +339,7 @@ export async function updateAdSettings(
         killSwitch: next.killSwitch ? 1 : 0,
         updatedAt: next.updatedAt,
       },
-    })
-    .run();
+    });
   return next;
 }
 
@@ -363,8 +355,7 @@ export async function listSpendingLaunches(db: Db, workspaceId: string): Promise
   return (await db
     .select()
     .from(adLaunches)
-    .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.status, "launched")))
-    .all())
+    .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.status, "launched"))))
     .map(rowToLaunch)
     .filter(isSpending);
 }
@@ -406,8 +397,7 @@ export async function checkSpendGuardrails(db: Db, launch: AdLaunch): Promise<Gu
 async function persist(db: Db, launchId: string, set: Partial<AdLaunchRow>): Promise<void> {
   await db.update(adLaunches)
     .set({ ...set, updatedAt: Date.now() })
-    .where(eq(adLaunches.id, launchId))
-    .run();
+    .where(eq(adLaunches.id, launchId));
 }
 
 /**
@@ -515,7 +505,7 @@ export async function performLaunch(
 /** Register the launched campaign in the Sprint 14 reporting mirror, linked
  * to the launch's Tuezday campaign — spend shows up with zero new plumbing. */
 async function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: string): Promise<string> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(adCampaigns)
     .where(
@@ -523,14 +513,12 @@ async function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: st
         eq(adCampaigns.adAccountId, launch.adAccountId),
         eq(adCampaigns.externalId, externalCampaignId),
       ),
-    )
-    .get();
+    ))[0];
   if (existing) {
     if (!existing.campaignId && launch.campaignId) {
       await db.update(adCampaigns)
         .set({ campaignId: launch.campaignId })
-        .where(eq(adCampaigns.id, existing.id))
-        .run();
+        .where(eq(adCampaigns.id, existing.id));
     }
     return existing.id;
   }
@@ -544,7 +532,7 @@ async function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: st
     lastSyncedAt: Date.now(),
     createdAt: Date.now(),
   };
-  await db.insert(adCampaigns).values(fresh).run();
+  await db.insert(adCampaigns).values(fresh);
   return fresh.id;
 }
 
@@ -583,8 +571,7 @@ export async function syncLaunchStatuses(
         eq(adLaunches.adAccountId, adAccountId),
         eq(adLaunches.status, "launched"),
       ),
-    )
-    .all();
+    );
   if (launched.length === 0) return;
 
   const statuses = await adapter.listCampaignStatuses(externalAccountId);

@@ -16,17 +16,17 @@ import { importAdsCsv } from "../src/services/ads";
 async function seedWorkspace(db: Db): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  await db.insert(workspaces).values({ id, name: "WS", createdAt: now, updatedAt: now }).run();
+  await db.insert(workspaces).values({ id, name: "WS", createdAt: now, updatedAt: now });
   return id;
 }
 
 async function factRows(db: Db, workspaceId: string) {
-  return await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+  return await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId));
 }
 
 describe("manual entry dual-write (learning.createMetric)", () => {
   it("writes the legacy row AND channel-subject point facts, non-null values only", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const recordedAt = 1_754_000_000_000;
 
@@ -42,8 +42,7 @@ describe("manual entry dual-write (learning.createMetric)", () => {
     const legacy = await db
       .select()
       .from(engagementMetrics)
-      .where(eq(engagementMetrics.workspaceId, workspaceId))
-      .all();
+      .where(eq(engagementMetrics.workspaceId, workspaceId));
     expect(legacy).toHaveLength(1);
 
     // One fact per observed metric; clicks was absent, so no clicks row.
@@ -61,7 +60,7 @@ describe("manual entry dual-write (learning.createMetric)", () => {
   });
 
   it("an all-null manual row writes the legacy row and ZERO facts — absence is not zero", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     await createMetric(db, workspaceId, {
       channel: "x",
@@ -72,8 +71,7 @@ describe("manual entry dual-write (learning.createMetric)", () => {
       await db
         .select()
         .from(engagementMetrics)
-        .where(eq(engagementMetrics.workspaceId, workspaceId))
-        .all(),
+        .where(eq(engagementMetrics.workspaceId, workspaceId)),
     ).toHaveLength(1);
     expect(await factRows(db, workspaceId)).toHaveLength(0);
   });
@@ -96,7 +94,7 @@ describe("ads dual-write (importAdsCsv → upsertMetrics)", () => {
   });
 
   it("writes the legacy daily row AND 1d ad_campaign facts; re-import updates in place", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
 
     await importAdsCsv(db, workspaceId, input(12.5));
@@ -104,8 +102,7 @@ describe("ads dual-write (importAdsCsv → upsertMetrics)", () => {
     const campaign = (await db
       .select()
       .from(adCampaigns)
-      .where(eq(adCampaigns.workspaceId, workspaceId))
-      .all())[0]!;
+      .where(eq(adCampaigns.workspaceId, workspaceId)))[0]!;
     let facts = await factRows(db, workspaceId);
     expect(facts.map((f) => f.metricKey).sort()).toEqual([
       "clicks",

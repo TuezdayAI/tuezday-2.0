@@ -92,18 +92,18 @@ describe("chunkText", () => {
 });
 
 describe("DbEvidenceStore", () => {
-  function makeStore(gateway: LlmGateway | undefined = fakeEmbedGateway()) {
-    const db = createTestDb();
+  async function makeStore(gateway: LlmGateway | undefined = fakeEmbedGateway()) {
+    const db = await createTestDb();
     return new DbEvidenceStore(db, gateway);
   }
 
   it("reports healthy without any external service", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     expect((await store.health()).healthy).toBe(true);
   });
 
   it("round-trips ingest and hybrid search with relevant-first ranking", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     const col = await store.createCollection("ws-1");
     await store.addDocument({
       title: "Pricing",
@@ -128,7 +128,7 @@ describe("DbEvidenceStore", () => {
   });
 
   it("never leaks results across collections", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     const a = await store.createCollection("ws-a");
     const b = await store.createCollection("ws-b");
     await store.addDocument({ title: "A", content: PRICING_DOC, collectionId: a, metadata: {} });
@@ -139,7 +139,7 @@ describe("DbEvidenceStore", () => {
   });
 
   it("deletes a document's chunks without touching other documents", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     const col = await store.createCollection("ws-1");
     const pricingId = await store.addDocument({
       title: "Pricing",
@@ -157,7 +157,7 @@ describe("DbEvidenceStore", () => {
   });
 
   it("ingests with null embeddings and still searches when the gateway has no key", async () => {
-    const store = makeStore(keylessGateway());
+    const store = await makeStore(keylessGateway());
     const col = await store.createCollection("ws-1");
     await store.addDocument({
       title: "Pricing",
@@ -176,7 +176,7 @@ describe("DbEvidenceStore", () => {
   });
 
   it("returns scores that survive rankEvidenceChunks' similarity floor", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     const col = await store.createCollection("ws-1");
     await store.addDocument({
       title: "Pricing",
@@ -201,7 +201,7 @@ describe("DbEvidenceStore", () => {
   });
 
   it("tolerates FTS syntax characters in prose queries", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     const col = await store.createCollection("ws-1");
     await store.addDocument({
       title: "Pricing",
@@ -217,7 +217,7 @@ describe("DbEvidenceStore", () => {
   });
 
   it("attachDocument is a compatible no-op", async () => {
-    const store = makeStore();
+    const store = await makeStore();
     const col = await store.createCollection("ws-1");
     const id = await store.addDocument({
       title: "Pricing",

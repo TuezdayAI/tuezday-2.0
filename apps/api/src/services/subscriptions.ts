@@ -4,7 +4,7 @@ import { subscriptions, type SubscriptionRow } from "../db/schema";
 import { randomUUID } from "node:crypto";
 
 export async function getSubscription(db: Db, workspaceId: string): Promise<SubscriptionRow | undefined> {
-  return await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).get();
+  return (await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)))[0];
 }
 
 export async function upsertFromStripe(
@@ -16,7 +16,7 @@ export async function upsertFromStripe(
   const now = Date.now();
 
   if (existing) {
-    return await db
+    return (await db
       .update(subscriptions)
       .set({
         plan: data.plan,
@@ -27,11 +27,10 @@ export async function upsertFromStripe(
         updatedAt: now,
       })
       .where(eq(subscriptions.id, existing.id))
-      .returning()
-      .get();
+      .returning())[0]!;
   }
 
-  return await db
+  return (await db
     .insert(subscriptions)
     .values({
       id: randomUUID(),
@@ -44,6 +43,5 @@ export async function upsertFromStripe(
       createdAt: now,
       updatedAt: now,
     })
-    .returning()
-    .get();
+    .returning())[0]!;
 }

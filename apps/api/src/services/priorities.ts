@@ -163,8 +163,7 @@ export async function deriveCampaignRisks(
   const activeCampaigns = await db
     .select()
     .from(campaigns)
-    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")))
-    .all();
+    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")));
   const risks: PriorityItem[] = [];
 
   for (const campaign of activeCampaigns) {
@@ -184,7 +183,6 @@ export async function deriveCampaignRisks(
               eq(campaignLaneRevisions.planRevisionId, campaign.currentPlanRevisionId),
             ),
           )
-          .all()
       : [];
     const activeLanes = lanes.filter((lane) => lane.status === "active");
     const blockedLane = activeLanes.find(
@@ -208,8 +206,7 @@ export async function deriveCampaignRisks(
           eq(drafts.campaignId, campaign.id),
           lt(publications.scheduledFor, now),
         ),
-      )
-      .all();
+      );
     const overdueActions = await db
       .select({ dueAt: externalActions.requestedFor })
       .from(externalActions)
@@ -220,8 +217,7 @@ export async function deriveCampaignRisks(
           eq(externalActions.status, "scheduled"),
           lt(externalActions.requestedFor, now),
         ),
-      )
-      .all();
+      );
     const overdueDueAt = [...overduePublications, ...overdueActions]
       .map((row) => row.dueAt)
       .filter((value): value is number => value !== null)
@@ -289,8 +285,7 @@ export async function connectionImpact(
     (await db
       .select({ id: campaigns.id })
       .from(campaigns)
-      .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")))
-      .all())
+      .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active"))))
       .map((row) => row.id),
   );
 
@@ -308,8 +303,7 @@ export async function connectionImpact(
         eq(campaigns.status, "active"),
         eq(campaigns.currentPlanRevisionId, campaignLaneRevisions.planRevisionId),
       ),
-    )
-    .all();
+    );
   if (liveLaneRows.length > 0) dependencies.add("active campaign lane");
   for (const row of liveLaneRows) campaignIds.add(row.campaignId);
 
@@ -323,8 +317,7 @@ export async function connectionImpact(
         eq(publications.connectionId, connectionId),
         eq(publications.status, "scheduled"),
       ),
-    )
-    .all();
+    );
   if (publicationRows.length > 0) dependencies.add("scheduled publication");
   for (const row of publicationRows) {
     if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
@@ -339,15 +332,14 @@ export async function connectionImpact(
         eq(externalActions.connectionId, connectionId),
         eq(externalActions.status, "scheduled"),
       ),
-    )
-    .all();
+    );
   if (scheduledActionRows.length > 0) dependencies.add("scheduled external action");
   for (const row of scheduledActionRows) {
     if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
   }
 
   if (
-    await db
+    (await db
       .select({ id: personaSocialAccounts.id })
       .from(personaSocialAccounts)
       .where(
@@ -355,14 +347,13 @@ export async function connectionImpact(
           eq(personaSocialAccounts.workspaceId, workspaceId),
           eq(personaSocialAccounts.connectionId, connectionId),
         ),
-      )
-      .get()
+      ))[0]
   ) {
     dependencies.add("persona sender configuration");
   }
 
   if (
-    await db
+    (await db
       .select({ id: discoverySources.id })
       .from(discoverySources)
       .where(
@@ -371,14 +362,13 @@ export async function connectionImpact(
           eq(discoverySources.connectionId, connectionId),
           eq(discoverySources.enabled, true),
         ),
-      )
-      .get()
+      ))[0]
   ) {
     dependencies.add("enabled discovery source");
   }
 
   if (
-    await db
+    (await db
       .select({ connectionId: crmSyncSettings.connectionId })
       .from(crmSyncSettings)
       .where(
@@ -386,8 +376,7 @@ export async function connectionImpact(
           eq(crmSyncSettings.workspaceId, workspaceId),
           eq(crmSyncSettings.connectionId, connectionId),
         ),
-      )
-      .get()
+      ))[0]
   ) {
     dependencies.add("CRM sync");
   }
@@ -397,8 +386,7 @@ export async function connectionImpact(
     .from(adAccounts)
     .where(
       and(eq(adAccounts.workspaceId, workspaceId), eq(adAccounts.connectionId, connectionId)),
-    )
-    .all();
+    );
   if (accountRows.length > 0) dependencies.add("ad account");
   if (accountRows.length > 0) {
     const adCampaignRows = await db
@@ -410,8 +398,7 @@ export async function connectionImpact(
           eq(adLaunches.workspaceId, workspaceId),
           eq(adAccounts.connectionId, connectionId),
         ),
-      )
-      .all();
+      );
     for (const row of adCampaignRows) {
       if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
     }
@@ -447,8 +434,7 @@ export async function collectPriorityItems(
         eq(externalActions.workspaceId, workspaceId),
         inArray(externalActions.status, [...ACTION_ATTENTION_STATUSES]),
       ),
-    )
-    .all())
+    ))
     .map(rowToExternalAction);
   for (const action of actions) items.push(actionItem(action));
 
@@ -466,8 +452,7 @@ export async function collectPriorityItems(
   const campaignRows = await db
     .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status })
     .from(campaigns)
-    .where(eq(campaigns.workspaceId, workspaceId))
-    .all();
+    .where(eq(campaigns.workspaceId, workspaceId));
   const campaignNames = new Map(campaignRows.map((row) => [row.id, row.name] as const));
   const activeCampaignIds = new Set(
     campaignRows.filter((row) => row.status === "active").map((row) => row.id),
@@ -475,8 +460,7 @@ export async function collectPriorityItems(
   const pending = await db
     .select()
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.state, "pending_review")))
-    .all();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.state, "pending_review")));
   for (const draft of pending) {
     items.push({
       id: draft.id,

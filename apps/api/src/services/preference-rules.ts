@@ -26,7 +26,7 @@ import {
   type TaskType,
 } from "@tuezday/contracts";
 import type { ResolvePreferenceRule, ResolvePreferences } from "@tuezday/brain";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import {
   preferenceEdits,
   preferenceRuleEvidence,
@@ -35,7 +35,6 @@ import {
 } from "../db/schema";
 import { normalizedEditDistance } from "./edit-distance";
 import { rowToPreferenceEdit } from "./preference-edits";
-
 const EVIDENCE_EXCERPT_CHARS = 300;
 
 export function rowToPreferenceRule(row: PreferenceRuleRow): PreferenceRule {
@@ -84,8 +83,7 @@ export async function listPreferenceRules(
         options.status ? eq(preferenceRules.status, options.status) : undefined,
       ),
     )
-    .orderBy(desc(preferenceRules.confidence), desc(preferenceRules.updatedAt))
-    .all())
+    .orderBy(desc(preferenceRules.confidence), desc(preferenceRules.updatedAt)))
     .map(rowToPreferenceRule);
 }
 
@@ -94,11 +92,10 @@ export async function getPreferenceRule(
   workspaceId: string,
   ruleId: string,
 ): Promise<PreferenceRule | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(preferenceRules)
-    .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.id, ruleId)))
-    .get();
+    .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.id, ruleId))))[0];
   return row ? rowToPreferenceRule(row) : undefined;
 }
 
@@ -108,8 +105,7 @@ export async function listRuleEvidence(db: Db, ruleId: string): Promise<Preferen
     .select()
     .from(preferenceRuleEvidence)
     .where(eq(preferenceRuleEvidence.ruleId, ruleId))
-    .orderBy(desc(preferenceRuleEvidence.createdAt))
-    .all();
+    .orderBy(desc(preferenceRuleEvidence.createdAt));
   if (rows.length === 0) return [];
   const edits = await db
     .select()
@@ -119,8 +115,7 @@ export async function listRuleEvidence(db: Db, ruleId: string): Promise<Preferen
         preferenceEdits.id,
         rows.map((row) => row.editId),
       ),
-    )
-    .all();
+    );
   const byId = new Map(edits.map((edit) => [edit.id, rowToPreferenceEdit(edit)]));
   return rows.map((row) => ({ ...row, edit: byId.get(row.editId) ?? null }));
 }
@@ -165,8 +160,7 @@ export async function upsertPreferenceRule(
   const existing = (await db
     .select()
     .from(preferenceRules)
-    .where(eq(preferenceRules.workspaceId, workspaceId))
-    .all())
+    .where(eq(preferenceRules.workspaceId, workspaceId)))
     .filter(
       (row) =>
         row.scopeTaskType === input.scopeTaskType &&
@@ -194,8 +188,7 @@ export async function upsertPreferenceRule(
         lastObservedAt: now,
         updatedAt: now,
       })
-      .where(eq(preferenceRules.id, existing.id))
-      .run();
+      .where(eq(preferenceRules.id, existing.id));
     if (input.evidence) await addRuleEvidence(db, existing.id, input.evidence, now);
     return { rule: (await getPreferenceRule(db, workspaceId, existing.id))!, merged: true };
   }
@@ -221,7 +214,7 @@ export async function upsertPreferenceRule(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(preferenceRules).values(row).run();
+  await db.insert(preferenceRules).values(row);
   if (input.evidence) await addRuleEvidence(db, row.id, input.evidence, now);
   return { rule: rowToPreferenceRule(row), merged: false };
 }
@@ -242,8 +235,7 @@ export async function addRuleEvidence(
     })
     .onConflictDoNothing({
       target: [preferenceRuleEvidence.ruleId, preferenceRuleEvidence.editId],
-    })
-    .run();
+    });
 }
 
 /** A rule the founder wrote by hand. Active immediately — they are the source of truth. */
@@ -284,17 +276,15 @@ export async function setRuleStatus(
       promotedAt: status === "promoted" ? now : existing.promotedAt,
       updatedAt: now,
     })
-    .where(eq(preferenceRules.id, ruleId))
-    .run();
+    .where(eq(preferenceRules.id, ruleId));
   return await getPreferenceRule(db, workspaceId, ruleId);
 }
 
 export async function deletePreferenceRule(db: Db, workspaceId: string, ruleId: string): Promise<boolean> {
   const result = await db
     .delete(preferenceRules)
-    .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.id, ruleId)))
-    .run();
-  return result.changes > 0;
+    .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.id, ruleId)));
+  return rowsAffected(result) > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -355,8 +345,7 @@ export async function retrievePreferenceRules(
   const ranked = (await db
     .select()
     .from(preferenceRules)
-    .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.status, "active")))
-    .all())
+    .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.status, "active"))))
     .filter((row) => inScope(row, query))
     .sort(
       (a, b) =>
@@ -378,12 +367,11 @@ export async function retrievePreferenceRules(
  */
 export async function recordRuleApplications(db: Db, ruleIds: string[], now = Date.now()): Promise<void> {
   for (const ruleId of ruleIds) {
-    const row = await db.select().from(preferenceRules).where(eq(preferenceRules.id, ruleId)).get();
+    const row = (await db.select().from(preferenceRules).where(eq(preferenceRules.id, ruleId)))[0];
     if (!row) continue;
     await db.update(preferenceRules)
       .set({ appliedCount: row.appliedCount + 1, lastAppliedAt: now, updatedAt: now })
-      .where(eq(preferenceRules.id, ruleId))
-      .run();
+      .where(eq(preferenceRules.id, ruleId));
   }
 }
 
@@ -413,9 +401,8 @@ export async function markRulesPromoted(db: Db, ruleIds: string[], now = Date.no
     const result = await db
       .update(preferenceRules)
       .set({ status: "promoted", promotedAt: now, updatedAt: now })
-      .where(and(eq(preferenceRules.id, ruleId), eq(preferenceRules.status, "active")))
-      .run();
-    promoted += result.changes;
+      .where(and(eq(preferenceRules.id, ruleId), eq(preferenceRules.status, "active")));
+    promoted += rowsAffected(result);
   }
   return promoted;
 }
@@ -430,8 +417,7 @@ export async function retireStaleRules(db: Db, workspaceId: string, now = Date.n
   const stale = (await db
     .select()
     .from(preferenceRules)
-    .where(eq(preferenceRules.workspaceId, workspaceId))
-    .all())
+    .where(eq(preferenceRules.workspaceId, workspaceId)))
     .filter(
       (row) =>
         (row.status === "active" || row.status === "candidate") &&
@@ -441,8 +427,7 @@ export async function retireStaleRules(db: Db, workspaceId: string, now = Date.n
   for (const row of stale) {
     await db.update(preferenceRules)
       .set({ status: "retired", retiredAt: now, updatedAt: now })
-      .where(eq(preferenceRules.id, row.id))
-      .run();
+      .where(eq(preferenceRules.id, row.id));
   }
   return stale.length;
 }

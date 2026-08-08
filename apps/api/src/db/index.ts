@@ -45,8 +45,9 @@ export interface CreateDbOptions {
  */
 export async function createDb(url: string, options: CreateDbOptions = {}): Promise<Db> {
   const pool = new pg.Pool({ connectionString: url, max: options.max ?? 10 });
-  const db = drizzle(pool, { schema }) as Db;
-  db.$pool = pool;
+  // drizzle already exposes the pool as `$client`; `$pool` is the typed name
+  // this codebase uses, so it is attached rather than cast over.
+  const db = Object.assign(drizzle(pool, { schema }), { $pool: pool }) as Db;
   if (!options.migrated) {
     // The evidence store's embedding column is `vector(768)`, so the extension
     // has to exist before the baseline migration creates the table. drizzle-kit
@@ -55,6 +56,17 @@ export async function createDb(url: string, options: CreateDbOptions = {}): Prom
     await migrate(db, { migrationsFolder });
   }
   return db;
+}
+
+/**
+ * Rows written by a statement. better-sqlite3 reported this as `changes:
+ * number`; node-postgres types `rowCount` as nullable because a statement that
+ * carries no row count (DDL, an empty multi-statement) reports none. No DML
+ * does, so the fallback is unreachable — it exists so callers can do arithmetic
+ * on the result without threading `number | null` through the fence checks.
+ */
+export function rowsAffected(result: { rowCount: number | null }): number {
+  return result.rowCount ?? 0;
 }
 
 /** Close the pool behind a Db. Safe to call more than once. */

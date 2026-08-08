@@ -397,11 +397,10 @@ async function replyIntent(
   if (item.kind === "dm") {
     target = item.authorHandle;
   } else if (item.publicationId) {
-    const pub = await db
+    const pub = (await db
       .select({ externalId: publications.externalId })
       .from(publications)
-      .where(eq(publications.id, item.publicationId))
-      .get();
+      .where(eq(publications.id, item.publicationId)))[0];
     target = pub?.externalId ?? null;
   }
   const { campaign, persona } = await replyContext(db, workspaceId, item);
@@ -539,8 +538,7 @@ export function replyActionAdapter(
       }
       await db.update(inboxItems)
         .set({ externalActionId: action.id, updatedAt: Date.now() })
-        .where(eq(inboxItems.id, item.id))
-        .run();
+        .where(eq(inboxItems.id, item.id));
       const workspace = (await getWorkspace(db, action.workspaceId))!;
       try {
         const updated = await postReplyForItem(db, fabric, fetcher, workspace, item, payload.body);
@@ -599,7 +597,7 @@ async function launchMessageRow(
   launchId: string,
   messageId: string,
 ): Promise<LaunchMessageRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(launchMessages)
     .where(
@@ -608,8 +606,7 @@ async function launchMessageRow(
         eq(launchMessages.launchId, launchId),
         eq(launchMessages.id, messageId),
       ),
-    )
-    .get();
+    ))[0];
 }
 
 async function sendIntent(
@@ -623,11 +620,10 @@ async function sendIntent(
     automated: boolean;
   },
 ): Promise<ExternalActionIntent> {
-  const launchRow = await db
+  const launchRow = (await db
     .select()
     .from(launches)
-    .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, args.launchId)))
-    .get();
+    .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, args.launchId))))[0];
   if (!launchRow) {
     throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
   }
@@ -804,16 +800,14 @@ async function sendGuardBlocker(
   message: LaunchMessageRow,
 ): Promise<ExternalActionBlocker | null> {
   if (message.sequenceRecipientId && payload.channel === "x") {
-    const launchRow = await db
+    const launchRow = (await db
       .select({ stopOnReply: launches.stopOnReply })
       .from(launches)
-      .where(eq(launches.id, payload.launchId))
-      .get();
-    const recipient = await db
+      .where(eq(launches.id, payload.launchId)))[0];
+    const recipient = (await db
       .select()
       .from(sequenceRecipients)
-      .where(eq(sequenceRecipients.id, message.sequenceRecipientId))
-      .get();
+      .where(eq(sequenceRecipients.id, message.sequenceRecipientId)))[0];
     if (
       launchRow?.stopOnReply === 1 &&
       recipient &&
@@ -896,8 +890,7 @@ function socialSendActionAdapter(
           lastError: null,
           updatedAt: now,
         })
-        .where(eq(launchMessages.id, message.id))
-        .run();
+        .where(eq(launchMessages.id, message.id));
     } else {
       await db.update(launchMessages)
         .set({
@@ -906,8 +899,7 @@ function socialSendActionAdapter(
           lastError: publication.lastError,
           updatedAt: now,
         })
-        .where(eq(launchMessages.id, message.id))
-        .run();
+        .where(eq(launchMessages.id, message.id));
     }
     return launchMessageReceipt(
       (await launchMessageRow(db, action.workspaceId, payload.launchId, message.id))!,
@@ -939,22 +931,19 @@ function socialSendActionAdapter(
           connectionId: connection!.id,
           updatedAt: now,
         })
-        .where(eq(launchMessages.id, message.id))
-        .run();
+        .where(eq(launchMessages.id, message.id));
       // Keep the sequence's stop-on-reply window aligned with the actual send,
       // even when the send was authorized from Review rather than the engine.
       if (message.sequenceRecipientId) {
         await db.update(sequenceRecipients)
           .set({ lastSentAt: now, updatedAt: now })
-          .where(eq(sequenceRecipients.id, message.sequenceRecipientId))
-          .run();
+          .where(eq(sequenceRecipients.id, message.sequenceRecipientId));
       }
     } catch (err) {
       const messageText = (err instanceof Error ? err.message : String(err)).slice(0, 500);
       await db.update(launchMessages)
         .set({ status: "failed", lastError: messageText, updatedAt: now })
-        .where(eq(launchMessages.id, message.id))
-        .run();
+        .where(eq(launchMessages.id, message.id));
     }
     return launchMessageReceipt(
       (await launchMessageRow(db, action.workspaceId, payload.launchId, message.id))!,
@@ -1018,8 +1007,7 @@ function socialSendActionAdapter(
       }
       await db.update(launchMessages)
         .set({ externalActionId: action.id, updatedAt: Date.now() })
-        .where(eq(launchMessages.id, message.id))
-        .run();
+        .where(eq(launchMessages.id, message.id));
       const receipt =
         payload.kind === "broadcast"
           ? await executeBroadcast(action, payload, message)
@@ -1286,8 +1274,7 @@ export function paidLaunchActionAdapter(
       }
       await db.update(adLaunches)
         .set({ externalActionId: action.id, updatedAt: Date.now() })
-        .where(eq(adLaunches.id, launch.id))
-        .run();
+        .where(eq(adLaunches.id, launch.id));
       const resolved = await resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId);
       if (!resolved) {
         return {
@@ -1523,8 +1510,7 @@ export function budgetChangeActionAdapter(
         }
         await db.update(adLaunches)
           .set({ dailyBudgetCents: updated.dailyBudgetCents, updatedAt: Date.now() })
-          .where(eq(adLaunches.id, payload.launchId))
-          .run();
+          .where(eq(adLaunches.id, payload.launchId));
         return {
           kind: "ad_mutation",
           id: payload.launchId,

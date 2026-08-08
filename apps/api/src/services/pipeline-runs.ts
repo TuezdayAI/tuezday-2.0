@@ -118,7 +118,7 @@ export async function startPipelineRun(db: Db, input: StartPipelineRunInput): Pr
     finishedAt: null,
   };
   try {
-    await db.insert(pipelineRuns).values(row).run();
+    await db.insert(pipelineRuns).values(row);
   } catch (err) {
     if (
       input.idempotencyKey &&

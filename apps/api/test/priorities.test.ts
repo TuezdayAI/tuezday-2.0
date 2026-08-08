@@ -38,7 +38,7 @@ describe("workspace priorities projection", () => {
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(T0));
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeLlm });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Priorities" } })
@@ -153,8 +153,7 @@ describe("workspace priorities projection", () => {
         nangoConnectionId: `nango-${connectionId}`,
         createdAt: T0 - HOUR,
         updatedAt: T0 - HOUR,
-      })
-      .run();
+      });
     const draft = await submitDraft(
       db,
       {
@@ -185,8 +184,7 @@ describe("workspace priorities projection", () => {
         lastError: "RATELIMIT: slow down",
         createdAt: T0 - 3 * HOUR,
         updatedAt: T0 - 2 * HOUR,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -444,8 +442,7 @@ describe("workspace priorities projection", () => {
           createdAt: T0 - 3 * HOUR,
           decidedAt: T0,
         },
-      ])
-      .run();
+      ]);
 
     const items = await fetchPriorities();
     expect(items).toContainEqual(
@@ -482,8 +479,7 @@ describe("workspace priorities projection", () => {
           lastError: status === "error" ? "OAuth token expired" : null,
           createdAt: T0 - HOUR,
           updatedAt: T0 - HOUR,
-        })
-        .run();
+        });
       return id;
     }
 
@@ -515,8 +511,7 @@ describe("workspace priorities projection", () => {
           scheduledFor: T0 + HOUR,
           createdAt: T0 - HOUR,
           updatedAt: T0 - HOUR,
-        })
-        .run();
+        });
     }
 
     const brokenConnectionId = await seedConnection("error");

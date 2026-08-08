@@ -49,7 +49,7 @@ export async function createRunningTurn(
     createdAt: now,
     completedAt: null,
   };
-  await db.insert(draftRevisionTurns).values(row).run();
+  await db.insert(draftRevisionTurns).values(row);
   return rowToTurn(row);
 }
 
@@ -79,8 +79,7 @@ export async function completeTurn(
       durationMs: input.durationMs,
       completedAt: now,
     })
-    .where(and(eq(draftRevisionTurns.id, turnId), eq(draftRevisionTurns.workspaceId, workspaceId)))
-    .run();
+    .where(and(eq(draftRevisionTurns.id, turnId), eq(draftRevisionTurns.workspaceId, workspaceId)));
   const row = await getTurn(db, workspaceId, turnId);
   if (!row) throw new Error("draft_revision_turn_not_found");
   return row;
@@ -103,8 +102,7 @@ export async function failTurn(
       durationMs: null,
       completedAt: now,
     })
-    .where(and(eq(draftRevisionTurns.id, turnId), eq(draftRevisionTurns.workspaceId, workspaceId)))
-    .run();
+    .where(and(eq(draftRevisionTurns.id, turnId), eq(draftRevisionTurns.workspaceId, workspaceId)));
   const row = await getTurn(db, workspaceId, turnId);
   if (!row) throw new Error("draft_revision_turn_not_found");
   return row;
@@ -115,11 +113,10 @@ async function getTurn(
   workspaceId: string,
   turnId: string,
 ): Promise<DraftRevisionTurn | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(draftRevisionTurns)
-    .where(and(eq(draftRevisionTurns.workspaceId, workspaceId), eq(draftRevisionTurns.id, turnId)))
-    .get();
+    .where(and(eq(draftRevisionTurns.workspaceId, workspaceId), eq(draftRevisionTurns.id, turnId))))[0];
   return row ? rowToTurn(row) : undefined;
 }
 
@@ -129,7 +126,7 @@ export async function getTurnByRequest(
   draftId: string,
   requestId: string,
 ): Promise<DraftRevisionTurn | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(draftRevisionTurns)
     .where(
@@ -138,8 +135,7 @@ export async function getTurnByRequest(
         eq(draftRevisionTurns.draftId, draftId),
         eq(draftRevisionTurns.requestId, requestId),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToTurn(row) : undefined;
 }
 
@@ -157,8 +153,7 @@ export async function listRevisionTurns(
         eq(draftRevisionTurns.draftId, draftId),
       ),
     )
-    .orderBy(asc(draftRevisionTurns.createdAt))
-    .all())
+    .orderBy(asc(draftRevisionTurns.createdAt)))
     .map(rowToTurn);
 }
 
@@ -176,6 +171,5 @@ export async function countCompletedRevisionTurnsSince(
         eq(draftRevisionTurns.status, "completed"),
         gte(draftRevisionTurns.completedAt, sinceMs),
       ),
-    )
-    .all()).length;
+    )).length;
 }

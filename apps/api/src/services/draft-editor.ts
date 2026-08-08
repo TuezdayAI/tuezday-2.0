@@ -99,8 +99,7 @@ async function evidenceDocumentLookup(db: Db, workspaceId: string) {
         sourceRef: evidenceDocuments.sourceRef,
       })
       .from(evidenceDocuments)
-      .where(eq(evidenceDocuments.workspaceId, workspaceId))
-      .all())
+      .where(eq(evidenceDocuments.workspaceId, workspaceId)))
       .flatMap((row) =>
         row.r2rDocumentId
           ? [
@@ -182,7 +181,7 @@ export async function getDraftEditorContext(
   const decisions = await listDecisions(db, draft.id);
   const turns = await listRevisionTurns(db, workspaceId, draft.id);
   const sourceGeneration = draft.sourceGenerationId
-    ? await db
+    ? (await db
         .select()
         .from(generations)
         .where(
@@ -190,8 +189,7 @@ export async function getDraftEditorContext(
             eq(generations.workspaceId, workspaceId),
             eq(generations.id, draft.sourceGenerationId),
           ),
-        )
-        .get()
+        ))[0]
     : undefined;
   const evidenceByR2rId = await evidenceDocumentLookup(db, workspaceId);
   const latestCompletedTurn = turns.filter((turn) => turn.status === "completed").at(-1);
@@ -223,8 +221,7 @@ export async function getDraftEditorContext(
             ne(drafts.id, draft.id),
           ),
         )
-        .orderBy(asc(drafts.createdAt))
-        .all())
+        .orderBy(asc(drafts.createdAt)))
         .map((row) => ({
           draftId: row.id,
           channel: row.channel as DraftEditorContext["siblings"][number]["channel"],

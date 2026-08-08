@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import type { Response as LightMyRequestResponse } from "light-my-request";
 import { describe, expect, it } from "vitest";
@@ -10,7 +7,7 @@ import type {
   ConnectorFabric,
   ProxyJsonResult,
 } from "../src/connectors/fabric";
-import { createDb, type Db } from "../src/db";
+import type { Db } from "../src/db";
 import {
   approvalDecisions,
   backgroundJobs,
@@ -35,7 +32,7 @@ import type { DiscoveryOperatorPolicy } from "../src/runtime/operator-policy";
 import { DEFAULT_BACKGROUND_JOB_POLICY } from "../src/runtime/background-job-policy";
 import { enqueueBackgroundJob } from "../src/services/background-jobs";
 import { reconcileBackgroundSchedules } from "../src/services/background-schedules";
-import { asUser, registerUser } from "./helpers";
+import { asUser, connectTestDbAgain, createTestDb, registerUser } from "./helpers";
 
 const WORKER_TOKEN = "sprint-49-acceptance-worker-token";
 
@@ -167,19 +164,10 @@ function fixtureFabric(input: {
   };
 }
 
-function closeDb(db: Db | undefined): void {
-  if (!db) return;
-  (db as Db & { $client: { close(): void } }).$client.close();
-}
-
 describe("Sprint 49 founder acceptance", () => {
   it(
     "survives restart and overlapping discovery, matching, and automation",
     async () => {
-      const tempDir = mkdtempSync(
-        path.join(tmpdir(), "tuezday-s49-acceptance-"),
-      );
-      const databaseFile = path.join(tempDir, "shared.sqlite");
       const firstProviderStalled = deferred<void>();
       const releaseFirstProvider = deferred<void>();
       const restartedProviderStalled = deferred<void>();
@@ -257,7 +245,7 @@ describe("Sprint 49 founder acceptance", () => {
       let campaignId = "";
 
       try {
-        dbA = createDb(databaseFile);
+        dbA = await createTestDb();
         appA = await buildApp({
           db: dbA,
           llm,
@@ -368,8 +356,7 @@ describe("Sprint 49 founder acceptance", () => {
             contentProfileJson: "{}",
             createdAt: now,
             updatedAt: now,
-          })
-          .run();
+          });
         const sourceResponse = await userA.inject({
           method: "POST",
           url: `/workspaces/${workspaceId}/discovery/sources`,
@@ -388,8 +375,7 @@ describe("Sprint 49 founder acceptance", () => {
 
         await reconcileBackgroundSchedules(dbA, queuePolicy);
         await dbA.update(backgroundSchedules)
-          .set({ nextRunAt: Date.now() + 86_400_000 })
-          .run();
+          .set({ nextRunAt: Date.now() + 86_400_000 });
         await enqueueBackgroundJob(dbA, {
           payload: { kind: "discovery", workspaceId },
           idempotencyKey: "sprint49:first-discovery",
@@ -407,14 +393,12 @@ describe("Sprint 49 founder acceptance", () => {
         expect(
           await dbA
             .select({ externalId: discoveredItems.externalId })
-            .from(discoveredItems)
-            .all(),
+            .from(discoveredItems),
         ).toEqual([{ externalId: "x:alpha-1" }]);
-        const firstClaim = (await dbA
+        const firstClaim = ((await dbA
           .select()
           .from(discoveryJobs)
-          .where(eq(discoveryJobs.sourceId, sourceId))
-          .get())!;
+          .where(eq(discoveryJobs.sourceId, sourceId)))[0])!;
         expect(firstClaim).toMatchObject({
           status: "running",
           attempt: 1,
@@ -426,12 +410,10 @@ describe("Sprint 49 founder acceptance", () => {
         // request remains suspended so its eventual write also proves fencing.
         await dbA.update(discoveryJobs)
           .set({ leaseExpiresAt: 0 })
-          .where(eq(discoveryJobs.id, firstClaim.id))
-          .run();
+          .where(eq(discoveryJobs.id, firstClaim.id));
         await dbA.update(taskLeases)
           .set({ expiresAt: 0 })
-          .where(eq(taskLeases.key, "discovery:scheduler"))
-          .run();
+          .where(eq(taskLeases.key, "discovery:scheduler"));
         await dbA.update(backgroundJobs)
           .set({ leaseExpiresAt: 0 })
           .where(
@@ -439,10 +421,11 @@ describe("Sprint 49 founder acceptance", () => {
               eq(backgroundJobs.kind, "discovery"),
               eq(backgroundJobs.status, "running"),
             ),
-          )
-          .run();
+          );
 
-        dbB = createDb(databaseFile);
+        // A second pool onto the same database: instance B is a different
+        // process, not a second handle on instance A's connection.
+        dbB = await connectTestDbAgain(dbA);
         appB = await buildApp({
           db: dbB,
           llm,
@@ -469,11 +452,10 @@ describe("Sprint 49 founder acceptance", () => {
         await restartedProviderStalled.promise;
 
         expect(
-          await dbB
+          (await dbB
             .select({ attempt: discoveryJobs.attempt })
             .from(discoveryJobs)
-            .where(eq(discoveryJobs.id, firstClaim.id))
-            .get(),
+            .where(eq(discoveryJobs.id, firstClaim.id)))[0],
         ).toEqual({ attempt: 2 });
         const providerCallsAtOverlap = stats.tweetPages.length;
         const overlappingTick = await appB.inject({
@@ -491,11 +473,10 @@ describe("Sprint 49 founder acceptance", () => {
         releaseRestartedProvider.resolve(undefined);
 
         await matchingStarted.promise;
-        const matchingItem = (await dbB
+        const matchingItem = ((await dbB
           .select()
           .from(discoveredItems)
-          .where(eq(discoveredItems.matchingState, "running"))
-          .get())!;
+          .where(eq(discoveredItems.matchingState, "running")))[0])!;
         const blockedAcceptance = await userB.inject({
           method: "POST",
           url:
@@ -506,7 +487,7 @@ describe("Sprint 49 founder acceptance", () => {
         expect(blockedAcceptance.json()).toMatchObject({
           error: "matching_not_ready",
         });
-        expect(await dbB.select().from(signals).all()).toHaveLength(0);
+        expect(await dbB.select().from(signals)).toHaveLength(0);
 
         releaseMatching.resolve(undefined);
         const restartedResponse = await restartedTick;
@@ -529,8 +510,7 @@ describe("Sprint 49 founder acceptance", () => {
         const occurrences = (await dbB
           .select({ externalId: discoveredItems.externalId })
           .from(discoveredItems)
-          .where(eq(discoveredItems.sourceId, sourceId))
-          .all())
+          .where(eq(discoveredItems.sourceId, sourceId)))
           .map((row) => row.externalId)
           .sort();
         expect(occurrences).toEqual([
@@ -542,11 +522,10 @@ describe("Sprint 49 founder acceptance", () => {
           "x:beta-3",
         ]);
         expect(new Set(occurrences)).toHaveLength(6);
-        const source = (await dbB
+        const source = ((await dbB
           .select({ cursorJson: discoverySources.cursorJson })
           .from(discoverySources)
-          .where(eq(discoverySources.id, sourceId))
-          .get())!;
+          .where(eq(discoverySources.id, sourceId)))[0])!;
         const cursor = JSON.parse(source.cursorJson) as {
           targets: Record<
             string,
@@ -578,8 +557,7 @@ describe("Sprint 49 founder acceptance", () => {
             reason: discoveredItemMatches.reason,
           })
           .from(discoveredItemMatches)
-          .where(eq(discoveredItemMatches.itemId, matchingItem.id))
-          .all();
+          .where(eq(discoveredItemMatches.itemId, matchingItem.id));
         expect(itemMatchesBeforeAccept).toEqual([
           {
             personaId,
@@ -604,8 +582,7 @@ describe("Sprint 49 founder acceptance", () => {
             reason: signalMatches.reason,
           })
           .from(signalMatches)
-          .where(eq(signalMatches.signalId, signalId))
-          .all();
+          .where(eq(signalMatches.signalId, signalId));
         expect(copiedMatches).toEqual(itemMatchesBeforeAccept);
 
         await enqueueBackgroundJob(dbB, {
@@ -646,8 +623,7 @@ describe("Sprint 49 founder acceptance", () => {
               eq(drafts.sourceSignalId, signalId),
               eq(drafts.campaignId, campaignId),
             ),
-          )
-          .all();
+          );
         expect(automaticDrafts).toHaveLength(1);
         expect(automaticDrafts[0]).toMatchObject({
           state: "approved",
@@ -660,8 +636,7 @@ describe("Sprint 49 founder acceptance", () => {
           .from(approvalDecisions)
           .where(
             eq(approvalDecisions.draftId, automaticDrafts[0]!.id),
-          )
-          .all();
+          );
         expect(decisions.map((decision) => decision.action)).toEqual([
           "submit",
           "approve",
@@ -670,11 +645,10 @@ describe("Sprint 49 founder acceptance", () => {
           decisions.filter((decision) => decision.action === "approve"),
         ).toHaveLength(1);
         expect(
-          await dbB
+          (await dbB
             .select({ automationMode: campaigns.automationMode })
             .from(campaigns)
-            .where(eq(campaigns.id, campaignId))
-            .get(),
+            .where(eq(campaigns.id, campaignId)))[0],
         ).toEqual({ automationMode: "scheduled_auto" });
       } finally {
         releaseFirstProvider.resolve(undefined);
@@ -689,9 +663,6 @@ describe("Sprint 49 founder acceptance", () => {
         );
         await appB?.close();
         await appA?.close();
-        closeDb(dbB);
-        closeDb(dbA);
-        rmSync(tempDir, { recursive: true, force: true });
       }
     },
     30_000,

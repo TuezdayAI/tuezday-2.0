@@ -201,8 +201,7 @@ export async function listCadenceRows(db: Db, workspaceId: string): Promise<Post
     .select()
     .from(postingCadences)
     .where(eq(postingCadences.workspaceId, workspaceId))
-    .orderBy(asc(postingCadences.createdAt))
-    .all())
+    .orderBy(asc(postingCadences.createdAt)))
     .map(rowToCadence);
 }
 
@@ -211,11 +210,10 @@ export async function getCadence(
   workspaceId: string,
   cadenceId: string,
 ): Promise<PostingCadence | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(postingCadences)
-    .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)))
-    .get();
+    .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId))))[0];
   return row ? rowToCadence(row) : undefined;
 }
 
@@ -241,7 +239,7 @@ export async function createCadence(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(postingCadences).values(row).run();
+  await db.insert(postingCadences).values(row);
   return rowToCadence(row);
 }
 
@@ -264,7 +262,7 @@ export async function updateCadence(
   if (input.timeOfDay !== undefined) patch.timeOfDay = input.timeOfDay;
   if (input.timezone !== undefined) patch.timezone = input.timezone;
   if (input.status !== undefined) patch.status = input.status;
-  await db.update(postingCadences).set(patch).where(eq(postingCadences.id, cadenceId)).run();
+  await db.update(postingCadences).set(patch).where(eq(postingCadences.id, cadenceId));
   return await getCadence(db, workspaceId, cadenceId);
 }
 
@@ -277,16 +275,13 @@ export async function deleteCadence(db: Db, workspaceId: string, cadenceId: stri
   const existing = await getCadence(db, workspaceId, cadenceId);
   if (!existing) return false;
   await db.delete(publications)
-    .where(and(eq(publications.cadenceId, cadenceId), eq(publications.status, "scheduled")))
-    .run();
+    .where(and(eq(publications.cadenceId, cadenceId), eq(publications.status, "scheduled")));
   await db.update(publications)
     .set({ cadenceId: null })
-    .where(eq(publications.cadenceId, cadenceId))
-    .run();
+    .where(eq(publications.cadenceId, cadenceId));
   await cancelPendingActionsForCadence(db, workspaceId, cadenceId, CADENCE_DELETED_REASON);
   await db.delete(postingCadences)
-    .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)))
-    .run();
+    .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)));
   return true;
 }
 
@@ -299,8 +294,7 @@ async function cadenceActions(db: Db, workspaceId: string, cadenceId: string) {
   return (await db
     .select()
     .from(externalActions)
-    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.kind, "publish")))
-    .all())
+    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.kind, "publish"))))
     .map((row) => ({
       action: rowToExternalAction(row),
       payload: JSON.parse(row.payloadJson) as { cadenceId?: string | null; draftId?: string },
@@ -338,8 +332,7 @@ async function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): 
     (await db
       .select({ draftId: publications.draftId })
       .from(publications)
-      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
-      .all())
+      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId))))
       .map((r) => r.draftId),
   );
   const actions = await cadenceActions(db, workspaceId, cadenceId);
@@ -369,8 +362,7 @@ async function takenSlots(db: Db, workspaceId: string, cadenceId: string): Promi
     (await db
       .select({ at: publications.scheduledFor })
       .from(publications)
-      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
-      .all())
+      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId))))
       .map((r) => r.at),
   );
   for (const { action } of await pendingCadenceActions(db, workspaceId, cadenceId)) {
@@ -519,8 +511,7 @@ async function cancelScheduledPublicationsForCadence(
         eq(publications.cadenceId, cadenceId),
         eq(publications.status, "scheduled"),
       ),
-    )
-    .run();
+    );
   await cancelPendingActionsForCadence(db, workspaceId, cadenceId, reason);
 }
 

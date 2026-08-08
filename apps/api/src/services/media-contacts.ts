@@ -31,9 +31,9 @@ export async function preparePrDraftEmailAction(
   workspaceId: string,
   draftId: string,
 ): Promise<ExternalActionCommand> {
-  const draft = await db.select().from(drafts).where(
+  const draft = (await db.select().from(drafts).where(
     and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
-  ).get();
+  ))[0];
   if (!draft) throw new PrDraftEmailError("draft_not_found", "PR pitch draft not found.");
   if (draft.state !== "approved") {
     throw new PrDraftEmailError("draft_not_approved", "Approve this pitch before sending it.");
@@ -75,7 +75,7 @@ export async function createMediaContact(
     coverageNotes: input.coverageNotes,
     createdAt: Date.now(),
   };
-  await db.insert(mediaContacts).values(row).run();
+  await db.insert(mediaContacts).values(row);
   return rowToContact(row);
 }
 
@@ -84,8 +84,7 @@ export async function listMediaContacts(db: Db, workspaceId: string): Promise<Me
     .select()
     .from(mediaContacts)
     .where(eq(mediaContacts.workspaceId, workspaceId))
-    .orderBy(desc(mediaContacts.createdAt))
-    .all())
+    .orderBy(desc(mediaContacts.createdAt)))
     .map(rowToContact);
 }
 
@@ -94,17 +93,16 @@ export async function getMediaContact(
   workspaceId: string,
   contactId: string,
 ): Promise<MediaContact | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(mediaContacts)
-    .where(and(eq(mediaContacts.workspaceId, workspaceId), eq(mediaContacts.id, contactId)))
-    .get();
+    .where(and(eq(mediaContacts.workspaceId, workspaceId), eq(mediaContacts.id, contactId))))[0];
   return row ? rowToContact(row) : undefined;
 }
 
 export async function deleteMediaContact(db: Db, workspaceId: string, contactId: string): Promise<boolean> {
   if (!await getMediaContact(db, workspaceId, contactId)) return false;
-  await db.delete(mediaContacts).where(eq(mediaContacts.id, contactId)).run();
+  await db.delete(mediaContacts).where(eq(mediaContacts.id, contactId));
   return true;
 }
 

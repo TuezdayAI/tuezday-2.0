@@ -41,8 +41,7 @@ export async function buildCalendar(db: Db, workspaceId: string, fromMs: number,
   for (const row of await db
     .select({ id: campaigns.id, name: campaigns.name })
     .from(campaigns)
-    .where(eq(campaigns.workspaceId, workspaceId))
-    .all()) {
+    .where(eq(campaigns.workspaceId, workspaceId))) {
     campaignNames.set(row.id, row.name);
   }
   const campaignOf = (campaignId: string | null | undefined) => {
@@ -61,8 +60,7 @@ export async function buildCalendar(db: Db, workspaceId: string, fromMs: number,
         gte(publications.scheduledFor, fromMs),
         lte(publications.scheduledFor, toMs),
       ),
-    )
-    .all();
+    );
 
   // Slots already covered by a publication, per cadence, so we don't double-list.
   const covered = new Map<string, Set<number>>();
@@ -97,8 +95,7 @@ export async function buildCalendar(db: Db, workspaceId: string, fromMs: number,
       .from(publications)
       .where(
         and(eq(publications.workspaceId, workspaceId), isNotNull(publications.externalActionId)),
-      )
-      .all())
+      ))
       .map((row) => row.externalActionId)
       .filter((id): id is string => !!id),
   );
@@ -112,8 +109,7 @@ export async function buildCalendar(db: Db, workspaceId: string, fromMs: number,
         gte(externalActions.requestedFor, fromMs),
         lte(externalActions.requestedFor, toMs),
       ),
-    )
-    .all();
+    );
   for (const row of actionRows) {
     const status = CALENDAR_ACTION_STATUS[row.status as ExternalActionStatus];
     if (!status || receiptActionIds.has(row.id)) continue;

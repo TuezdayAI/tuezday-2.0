@@ -116,12 +116,11 @@ async function seedReadyProfile(db: Db, workspaceId: string): Promise<void> {
       corpusChars: 100,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 async function setup() {
-  const db = createTestDb();
+  const db = await createTestDb();
   const { user } = await registerAccount(db, {
     email: `bad-${randomUUID()}@test.dev`,
     password: "test-password-1",
@@ -253,8 +252,7 @@ describe("runBrainAutoDraft", () => {
         lastError: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     const explodingFabric = new Proxy(fakeFabric(), {
       get() {
         throw new Error("fabric exploded");

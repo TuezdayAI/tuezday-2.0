@@ -55,10 +55,9 @@ const noEvidence: EvidenceStore = {
 const emptyDocs: BrainContents = { soul: "", icp: "", voice: "", history: "", now: "" };
 
 async function seedWorkspace(): Promise<Db> {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Memory", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Memory", createdAt: 1, updatedAt: 1 });
   return db;
 }
 
@@ -330,8 +329,7 @@ describe("this morning's edit changes this afternoon's generation (Sprint 68 acc
         source: "manual",
         sourceUrl: null,
         createdAt: 2,
-      })
-      .run();
+      });
     await db.insert(drafts)
       .values({
         id: DRAFT_ID,
@@ -343,8 +341,7 @@ describe("this morning's edit changes this afternoon's generation (Sprint 68 acc
         state: "pending_review",
         createdAt: 3,
         updatedAt: 3,
-      })
-      .run();
+      });
 
     // 09:00 — the founder rewrites the opening.
     await applyDraftAction(

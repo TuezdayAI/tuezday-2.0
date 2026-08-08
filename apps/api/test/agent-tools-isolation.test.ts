@@ -76,8 +76,7 @@ interface Seeded {
 async function seedWorkspace(marker: string): Promise<Seeded> {
   const workspaceId = randomUUID();
   await db.insert(workspaces)
-    .values({ id: workspaceId, name: `WS ${marker}`, createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: workspaceId, name: `WS ${marker}`, createdAt: 1, updatedAt: 1 });
 
   await updateBrainDoc(db, workspaceId, "voice", `## Tone\n\nOur tone is ${marker} direct.\n`);
   const persona = await createPersona(
@@ -104,8 +103,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       state: "approved",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(drafts)
     .values({
       id: randomUUID(),
@@ -117,8 +115,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       state: "rejected",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
 
   const connectionId = randomUUID();
   await db.insert(connections)
@@ -129,8 +126,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       nangoConnectionId: `nango-${connectionId}`,
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(publications)
     .values({
       id: randomUUID(),
@@ -145,8 +141,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       publishedAt: 2,
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
 
   const sourceId = randomUUID();
   await db.insert(discoverySources)
@@ -158,8 +153,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       configJson: "{}",
       status: "ok",
       createdAt: 1,
-    })
-    .run();
+    });
   await db.insert(discoveredItems)
     .values({
       id: randomUUID(),
@@ -171,8 +165,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       summary: `${marker} summary about pricing.`,
       score: 50,
       createdAt: 1,
-    })
-    .run();
+    });
 
   // Evidence: one ready document per workspace, in that workspace's collection.
   const collectionId = await store.createCollection(workspaceId);
@@ -192,8 +185,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       status: "ready",
       kind: "manual",
       createdAt: 1,
-    })
-    .run();
+    });
 
   return { workspaceId, personaId: persona.id, campaignId: campaign.id };
 }
@@ -214,7 +206,7 @@ describe("tenant isolation across every read tool", () => {
   let b: Seeded;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     store = new FakeEvidenceStore();
     a = await seedWorkspace(MARKER.a);
     b = await seedWorkspace(MARKER.b);

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import type { BannedClaim, BannedClaimInput } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import { workspaceBannedClaims } from "../db/schema";
 
 /**
@@ -17,8 +17,7 @@ export async function listBannedClaims(db: Db, workspaceId: string): Promise<Ban
     .select()
     .from(workspaceBannedClaims)
     .where(eq(workspaceBannedClaims.workspaceId, workspaceId))
-    .orderBy(asc(workspaceBannedClaims.createdAt))
-    .all();
+    .orderBy(asc(workspaceBannedClaims.createdAt));
 }
 
 /** Adding a phrase that already exists is a no-op returning the existing row. */
@@ -27,7 +26,7 @@ export async function addBannedClaim(
   workspaceId: string,
   input: BannedClaimInput,
 ): Promise<BannedClaim> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(workspaceBannedClaims)
     .where(
@@ -35,8 +34,7 @@ export async function addBannedClaim(
         eq(workspaceBannedClaims.workspaceId, workspaceId),
         eq(workspaceBannedClaims.phrase, input.phrase),
       ),
-    )
-    .get();
+    ))[0];
   if (existing) return existing;
   const row: BannedClaim = {
     id: randomUUID(),
@@ -45,7 +43,7 @@ export async function addBannedClaim(
     note: input.note,
     createdAt: Date.now(),
   };
-  await db.insert(workspaceBannedClaims).values(row).run();
+  await db.insert(workspaceBannedClaims).values(row);
   return row;
 }
 
@@ -58,7 +56,6 @@ export async function removeBannedClaim(db: Db, workspaceId: string, claimId: st
         eq(workspaceBannedClaims.workspaceId, workspaceId),
         eq(workspaceBannedClaims.id, claimId),
       ),
-    )
-    .run();
-  return result.changes > 0;
+    );
+  return rowsAffected(result) > 0;
 }

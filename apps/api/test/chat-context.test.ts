@@ -42,9 +42,9 @@ let workspaceId: string;
 const evidence = new NoEvidence();
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   workspaceId = randomUUID();
-  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 });
   await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
   await updateBrainDoc(db, workspaceId, "icp", "## Buyer\n\nSeed-stage founders selling to RevOps.\n");
   await updateBrainDoc(db, workspaceId, "history", "## Launches\n\nShipped the analytics beta in March.\n");
@@ -124,7 +124,7 @@ describe("the thread's context bundle", () => {
     // getCampaign misses, and the thread degrades to unscoped rather than
     // pulling a rival workspace's objective into the prefix.
     const rival = randomUUID();
-    await db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 }).run();
+    await db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 });
     const theirCampaign = await createCampaign(
       db,
       rival,

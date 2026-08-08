@@ -6,6 +6,7 @@ import {
   evidenceCollections,
   evidenceChunks,
   evidenceDocuments,
+  workspaces,
 } from "../src/db/schema";
 import { DbEvidenceStore } from "../src/evidence/db-store";
 import { migrateEvidence } from "../src/evidence/migrate";
@@ -14,12 +15,9 @@ import { createTestDb } from "./helpers";
 const WS = "11111111-1111-4111-8111-111111111111";
 
 async function seedWorkspace(db: Db): Promise<void> {
-  (db as unknown as { $client: import("better-sqlite3").Database }).$client
-    .prepare(`INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, 'W', 1, 1)`)
-    .run(WS);
+  await db.insert(workspaces).values({ id: WS, name: "W", createdAt: 1, updatedAt: 1 });
   await db.insert(evidenceCollections)
-    .values({ workspaceId: WS, r2rCollectionId: "r2r-col-1", createdAt: 1 })
-    .run();
+    .values({ workspaceId: WS, r2rCollectionId: "r2r-col-1", createdAt: 1 });
 }
 
 async function seedDoc(
@@ -41,8 +39,7 @@ async function seedDoc(
       sourceCreatedAt: null,
       createdAt: 1,
       ...over,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -64,7 +61,7 @@ describe("migrateEvidence", () => {
   let store: DbEvidenceStore;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     store = new DbEvidenceStore(db);
     await seedWorkspace(db);
   });
@@ -83,8 +80,7 @@ describe("migrateEvidence", () => {
         status: "accepted",
         evidenceDocumentId: docId,
         createdAt: 1,
-      })
-      .run();
+      });
     const fetcher = fakeR2rFetcher({});
 
     const summary = await migrateEvidence(db, store, fetcher, "http://r2r.local");
@@ -92,12 +88,12 @@ describe("migrateEvidence", () => {
     expect(summary.migrated).toBe(1);
     expect(summary.failed).toBe(0);
     expect(fetcher).not.toHaveBeenCalled();
-    const doc = (await db.select().from(evidenceDocuments).all())[0]!;
-    const chunks = await db.select().from(evidenceChunks).all();
+    const doc = (await db.select().from(evidenceDocuments))[0]!;
+    const chunks = await db.select().from(evidenceChunks);
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks[0]!.documentId).toBe(doc.r2rDocumentId);
     // Collection remapped to a native id and chunks scoped to it.
-    const col = (await db.select().from(evidenceCollections).all())[0]!;
+    const col = (await db.select().from(evidenceCollections))[0]!;
     expect(col.r2rCollectionId).not.toBe("r2r-col-1");
     expect(chunks[0]!.collectionId).toBe(col.r2rCollectionId);
   });
@@ -113,7 +109,7 @@ describe("migrateEvidence", () => {
     expect(summary.migrated).toBe(1);
     const results = await store.search(
       "pricing plans",
-      (await db.select().from(evidenceCollections).all())[0]!.r2rCollectionId,
+      (await db.select().from(evidenceCollections))[0]!.r2rCollectionId,
       5,
     );
     expect(results.length).toBeGreaterThan(0);
@@ -126,7 +122,7 @@ describe("migrateEvidence", () => {
 
     expect(summary.migrated).toBe(0);
     expect(summary.failed).toBe(1);
-    const doc = (await db.select().from(evidenceDocuments).all())[0]!;
+    const doc = (await db.select().from(evidenceDocuments))[0]!;
     expect(doc.status).toBe("failed");
     expect(doc.error).toBeTruthy();
   });
@@ -140,7 +136,7 @@ describe("migrateEvidence", () => {
 
     expect(second.migrated).toBe(0);
     expect(second.skipped).toBe(1);
-    expect(await db.select().from(evidenceChunks).all()).toHaveLength(1);
+    expect(await db.select().from(evidenceChunks)).toHaveLength(1);
   });
 
   it("ignores documents that never made it into the store", async () => {

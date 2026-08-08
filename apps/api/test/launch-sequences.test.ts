@@ -151,7 +151,7 @@ describe("multi-step sequences", () => {
     vi.setSystemTime(T0);
     vi.stubEnv("TWITTER_CLIENT_ID", "cid");
     vi.stubEnv("TWITTER_CLIENT_SECRET", "csecret");
-    db = createTestDb();
+    db = await createTestDb();
     state = newState();
     emailProvider = new FakeOutboundEmailProvider();
     app = await buildAuthedApp({
@@ -181,7 +181,7 @@ describe("multi-step sequences", () => {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     // Legacy engine scenarios: sends run autonomously so kill-switch/stop-on-
     // reply behaviour stays observable. The send authorization queue is covered
     // in external-action-messaging.test.ts.
@@ -217,7 +217,7 @@ describe("multi-step sequences", () => {
         status: "allowed",
         createdAt: now,
         updatedAt: now,
-      }).run();
+      });
     }
     return id;
   }
@@ -531,8 +531,7 @@ describe("multi-step sequences", () => {
         externalCreatedAt: T0.getTime() + HOUR,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     setNow(T0.getTime() + 24 * HOUR + 60_000);
     await runSeq(launchId);
@@ -603,8 +602,7 @@ describe("multi-step sequences", () => {
         perCampaignDailyCap: 5,
         autoReplyEnabled: 0,
         updatedAt: now,
-      })
-      .run();
+      });
 
     const alice = await createLead("Alice", "alice");
     const aud = await audienceOf([alice]);
@@ -622,8 +620,7 @@ describe("multi-step sequences", () => {
     // Turn the kill switch off; the held step now dispatches.
     await db.insert(socialAutomationSettings)
       .values({ workspaceId, killSwitch: 0, perConnectionDailyCap: 10, perCampaignDailyCap: 5, autoReplyEnabled: 0, updatedAt: now })
-      .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: { killSwitch: 0 } })
-      .run();
+      .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: { killSwitch: 0 } });
 
     await runSeq(launchId);
     expect((await detail(launchId)).messages.find((m: { channel: string }) => m.channel === "x").status).toBe("sent");

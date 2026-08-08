@@ -127,8 +127,7 @@ async function persistResolutionSuccess(
         eq(trackedSocialAccounts.workspaceId, account.workspaceId),
         eq(trackedSocialAccounts.id, account.id),
       ),
-    )
-    .run();
+    );
   return (await getTrackedSocialAccount(
     db,
     account.workspaceId,
@@ -151,8 +150,7 @@ async function persistResolutionFailure(
         eq(trackedSocialAccounts.workspaceId, account.workspaceId),
         eq(trackedSocialAccounts.id, account.id),
       ),
-    )
-    .run();
+    );
 }
 
 export async function resolveTrackedSocialAccount(

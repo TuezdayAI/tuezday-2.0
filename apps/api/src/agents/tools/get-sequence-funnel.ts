@@ -25,8 +25,7 @@ export const getSequenceFunnelTool: Tool<Input, unknown> = {
       const available = await ctx.db
         .select({ id: outreachSequences.id, name: outreachSequences.name })
         .from(outreachSequences)
-        .where(eq(outreachSequences.workspaceId, ctx.workspaceId))
-        .all();
+        .where(eq(outreachSequences.workspaceId, ctx.workspaceId));
       return {
         error: "not_found",
         note: `No outreach sequence with id ${sequenceId} in this workspace.`,

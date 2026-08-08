@@ -133,11 +133,10 @@ const script = (connectionId: string): ScriptedStep[] => [
 ];
 
 async function fixture(posts: Array<Record<string, string>>) {
-  const db = createTestDb();
+  const db = await createTestDb();
   const connectors = fabric(posts);
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Acting", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Acting", createdAt: 1, updatedAt: 1 });
   await db.insert(signals)
     .values({
       id: SIGNAL_ID,
@@ -146,8 +145,7 @@ async function fixture(posts: Array<Record<string, string>>) {
       source: "manual",
       sourceUrl: null,
       createdAt: 2,
-    })
-    .run();
+    });
   const connectionId = randomUUID();
   await db.insert(connections)
     .values({
@@ -158,8 +156,7 @@ async function fixture(posts: Array<Record<string, string>>) {
       displayName: "Founder Reddit",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(drafts)
     .values({
       id: DRAFT_ID,
@@ -172,8 +169,7 @@ async function fixture(posts: Array<Record<string, string>>) {
       state: "approved",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await ensureWorkspaceActionPolicies(db, WORKSPACE_ID);
   const proposals = createAgentProposals({
     db,
@@ -247,15 +243,15 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
     );
     expect(executed.run.status).toBe("succeeded");
 
-    const action = (await db.select().from(externalActions).all())[0];
+    const action = (await db.select().from(externalActions))[0];
     expect(action?.status).toBe("authorization_required");
     // Demonstrably stopped: nothing left the building.
     expect(posts).toHaveLength(0);
-    expect(await db.select().from(publications).all()).toHaveLength(0);
+    expect(await db.select().from(publications)).toHaveLength(0);
 
     // ...and it is attributable, both directions.
     expect(action?.origin).toBe("agent");
-    const proposal = (await db.select().from(agentProposals).all())[0];
+    const proposal = (await db.select().from(agentProposals))[0];
     expect(proposal?.externalActionId).toBe(action?.id);
     expect(proposal?.rationale).toContain("peaking");
     expect(action?.originRunId).toBe(proposal?.agentRunId);
@@ -274,7 +270,7 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
     );
 
     expect(posts).toHaveLength(1);
-    const action = (await db.select().from(externalActions).all())[0];
+    const action = (await db.select().from(externalActions))[0];
     expect(action?.status).toBe("succeeded");
     // The policy that let it out is the same one a human proposal resolves.
     expect(JSON.parse(action!.policySnapshotJson).effective).toBe("autonomous");
@@ -297,8 +293,8 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
     expect(declared).toContain("propose_publication");
     // ...and no effect whatsoever, even though the policy was autonomous.
     expect(posts).toHaveLength(0);
-    expect(await db.select().from(externalActions).all()).toHaveLength(0);
-    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions)).toHaveLength(0);
+    expect(await db.select().from(agentProposals)).toHaveLength(0);
   });
 
   it("does not offer the tool at all when no propose seam was injected (D-69.7)", async () => {
@@ -315,7 +311,7 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
     );
     expect(connectionId).toBeTruthy();
     expect(gateway.calls[0]!.tools ?? []).toHaveLength(0);
-    expect(await db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions)).toHaveLength(0);
   });
 
   it("keeps the read tools untouched by all of this", async () => {
@@ -377,7 +373,7 @@ describe("the draft an agent writes still meets a human first (D-69.2)", () => {
     expect(written.ok).toBe(true);
     if (!written.ok) return;
 
-    const draft = await db.select().from(drafts).where(eq(drafts.id, written.id!)).get();
+    const draft = (await db.select().from(drafts).where(eq(drafts.id, written.id!)))[0];
     expect(draft?.state).toBe("pending_review");
 
     // Even under an autonomous publish policy, the agent's own writing cannot

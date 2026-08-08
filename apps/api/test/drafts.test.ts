@@ -32,7 +32,7 @@ describe("approval gate API", () => {
   let generationId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeGateway });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Gatekeeper" } })
@@ -267,8 +267,7 @@ describe("approval gate API", () => {
       return await db
         .select()
         .from(approvalDecisions)
-        .where(eq(approvalDecisions.draftId, draftId))
-        .all();
+        .where(eq(approvalDecisions.draftId, draftId));
     }
 
     async function decisionFor(draftId: string, action: string) {
@@ -335,7 +334,7 @@ describe("approval gate API", () => {
     it("includes the draft's media in the fingerprint", async () => {
       const draft = (await submit()).json();
       const mediaJson = JSON.stringify([{ url: "https://cdn.test/a.png", type: "image" }]);
-      await db.update(draftsTable).set({ mediaJson }).where(eq(draftsTable.id, draft.id)).run();
+      await db.update(draftsTable).set({ mediaJson }).where(eq(draftsTable.id, draft.id));
       await act(draft.id, "approve");
 
       const stored = (await decisionFor(draft.id, "approve")).contentFingerprint;
@@ -443,8 +442,7 @@ describe("approval gate API", () => {
             eq(approvalDecisions.draftId, draft.id),
             eq(approvalDecisions.action, "approve"),
           ),
-        )
-        .all();
+        );
       expect(scoped).toHaveLength(1);
       expect(scoped[0]?.contentFingerprint).toMatch(/^[a-f0-9]{64}$/);
     });
@@ -477,8 +475,7 @@ describe("approval gate API", () => {
       // what the fingerprint exists to catch.
       await db.update(draftsTable)
         .set({ content: "Rewritten after approval" })
-        .where(eq(draftsTable.id, draft.id))
-        .run();
+        .where(eq(draftsTable.id, draft.id));
 
       expect(await humanApprovalCoveringDraft(db, workspaceId, draft.id)).toBeNull();
     });
@@ -488,8 +485,7 @@ describe("approval gate API", () => {
       await act(draft.id, "approve");
       await db.update(draftsTable)
         .set({ mediaJson: JSON.stringify([{ url: "https://cdn.test/b.png", type: "image" }]) })
-        .where(eq(draftsTable.id, draft.id))
-        .run();
+        .where(eq(draftsTable.id, draft.id));
 
       expect(await humanApprovalCoveringDraft(db, workspaceId, draft.id)).toBeNull();
     });
@@ -550,8 +546,7 @@ describe("approval gate API", () => {
       // lookup has to break deterministically.
       await db.update(draftsTable)
         .set({ state: "edited" })
-        .where(eq(draftsTable.id, draft.id))
-        .run();
+        .where(eq(draftsTable.id, draft.id));
       const reopened = (await getDraft(db, workspaceId, draft.id))!;
       const edited = await applyDraftAction(db, reopened, "edit", { userId: "u", label: "founder", human: true }, "v2");
       await applyDraftAction(db, edited, "approve", { userId: "u", label: "founder", human: true });
@@ -560,8 +555,7 @@ describe("approval gate API", () => {
       // only the insertion-order tie-break can pick the right one.
       await db.update(approvalDecisions)
         .set({ createdAt: 1_700_000_000_000 })
-        .where(eq(approvalDecisions.draftId, draft.id))
-        .run();
+        .where(eq(approvalDecisions.draftId, draft.id));
 
       const latest = await humanApprovalCoveringDraft(db, workspaceId, draft.id);
       expect(latest?.fingerprint).not.toBe(first?.fingerprint);

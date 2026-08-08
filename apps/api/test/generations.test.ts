@@ -30,7 +30,7 @@ describe("generations API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: fakeGateway() });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",
@@ -97,7 +97,7 @@ describe("generations API", () => {
     });
 
     it("returns 502 and stores nothing when the provider fails", async () => {
-      const failApp = await buildAuthedApp({ db: createTestDb(), llm: failingGateway() });
+      const failApp = await buildAuthedApp({ db: await createTestDb(), llm: failingGateway() });
       const ws = (
         await failApp.inject({ method: "POST", url: "/workspaces", payload: { name: "X" } })
       ).json();

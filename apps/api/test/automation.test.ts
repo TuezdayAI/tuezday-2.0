@@ -114,7 +114,7 @@ describe("social automation", () => {
     vi.stubEnv("REDDIT_CLIENT_SECRET", "csecret");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(MONDAY_8AM_UTC);
-    db = createTestDb();
+    db = await createTestDb();
     state = fabricState();
     app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     workspaceId = (
@@ -461,8 +461,7 @@ describe("social automation", () => {
     );
     await started.promise;
     await db.update(taskLeases)
-      .set({ expiresAt: 0 })
-      .run();
+      .set({ expiresAt: 0 });
     const winner = await runAutomationWithLease(
       deps,
       workspaceId,
@@ -783,8 +782,7 @@ describe("social automation", () => {
           createdAt: now,
           updatedAt: now,
         },
-      ])
-      .run();
+      ]);
 
     // The receipts already exist: this is the scheduling/dispatch race the
     // earlier guardrails cannot close. Manual publishing remains available.
@@ -872,8 +870,7 @@ describe("social automation", () => {
     const decisions = (await db
       .select()
       .from(externalActionDecisions)
-      .where(eq(externalActionDecisions.actionId, stopped[0]!.id))
-      .all())
+      .where(eq(externalActionDecisions.actionId, stopped[0]!.id)))
       .filter((row) => row.decision === "deny");
     expect(decisions).toHaveLength(1);
     expect(decisions[0]).toMatchObject({ actorHuman: false, actorLabel: "system" });

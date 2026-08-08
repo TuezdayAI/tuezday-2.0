@@ -73,8 +73,7 @@ async function seedAction(db: Db, workspaceId: string): Promise<string> {
       authorizedAt: now,
       dispatchedAt: now,
       completedAt: now,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -108,8 +107,7 @@ async function seedAcceptedDelivery(
       lastError: null,
       createdAt: acceptedAt,
       updatedAt: acceptedAt,
-    })
-    .run();
+    });
 }
 
 describe("email recipient safety", () => {
@@ -121,14 +119,14 @@ describe("email recipient safety", () => {
 
   beforeEach(async () => {
     process.env.EMAIL_UNSUBSCRIBE_SECRET = "email-unsubscribe-test-secret";
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildApp({ db });
     const user = await registerUser(app);
     authed = asUser(app, user.token);
     workspaceId = (
       await authed.inject({ method: "POST", url: "/workspaces", payload: { name: "Acme" } })
     ).json().id;
-    await db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
+    await db.insert(workspaceEmailSenders).values(senderRow(workspaceId));
   });
 
   afterEach(async () => {
@@ -172,7 +170,7 @@ describe("email recipient safety", () => {
       status: "suppressed",
     });
     expect(
-      await db
+      (await db
         .select()
         .from(emailSuppressions)
         .where(
@@ -180,18 +178,16 @@ describe("email recipient safety", () => {
             eq(emailSuppressions.workspaceId, workspaceId),
             eq(emailSuppressions.normalizedEmail, "lead@buyer.com"),
           ),
-        )
-        .get(),
+        ))[0],
     ).toMatchObject({ reason: "founder" });
 
     const allowed = await putPermission("lead@buyer.com", "allowed");
     expect(allowed.json().status).toBe("allowed");
     expect(
-      await db
+      (await db
         .select()
         .from(emailSuppressions)
-        .where(eq(emailSuppressions.normalizedEmail, "lead@buyer.com"))
-        .get(),
+        .where(eq(emailSuppressions.normalizedEmail, "lead@buyer.com")))[0],
     ).toBeUndefined();
 
     const read = await authed.inject({
@@ -210,8 +206,7 @@ describe("email recipient safety", () => {
         normalizedEmail: "optedout@example.com",
         reason: "unsubscribe",
         createdAt: now,
-      })
-      .run();
+      });
     await putPermission("optedout@example.com", "suppressed");
     await putPermission("optedout@example.com", "allowed");
     expect(await checkEmailRecipientSafety(db, workspaceId, "optedout@example.com")).toMatchObject({
@@ -273,18 +268,16 @@ describe("email recipient safety", () => {
     expect(replay.statusCode).toBe(200);
 
     expect(
-      await db
+      (await db
         .select()
         .from(emailSuppressions)
-        .where(eq(emailSuppressions.normalizedEmail, "lead@buyer.com"))
-        .get(),
+        .where(eq(emailSuppressions.normalizedEmail, "lead@buyer.com")))[0],
     ).toMatchObject({ reason: "unsubscribe" });
     expect(
-      await db
+      (await db
         .select()
         .from(emailRecipientPermissions)
-        .where(eq(emailRecipientPermissions.normalizedEmail, "lead@buyer.com"))
-        .get(),
+        .where(eq(emailRecipientPermissions.normalizedEmail, "lead@buyer.com")))[0],
     ).toMatchObject({ status: "suppressed" });
 
     const tampered = await app.inject({ method: "POST", url: `/u/${token}x` });

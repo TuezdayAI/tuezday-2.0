@@ -13,10 +13,9 @@ const ORIGINAL =
   "Pricing pages are broken. Should you charge per seat? Here is what we learned shipping usage-based billing to 40 customers.";
 
 async function fixture(): Promise<{ db: Db; draftId: string }> {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Capture", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Capture", createdAt: 1, updatedAt: 1 });
   const draftId = "22222222-2222-4222-8222-222222222222";
   await db.insert(drafts)
     .values({
@@ -29,8 +28,7 @@ async function fixture(): Promise<{ db: Db; draftId: string }> {
       state: "pending_review",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   return { db, draftId };
 }
 

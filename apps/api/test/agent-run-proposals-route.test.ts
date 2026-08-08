@@ -14,7 +14,7 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
   let runId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Acting" } })
@@ -33,8 +33,7 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
         system: "system",
         inputMessages: "[]",
         startedAt: 1,
-      })
-      .run();
+      });
   });
 
   afterEach(async () => {
@@ -54,8 +53,7 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
         state: "pending_review",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -101,7 +99,7 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
       summary: "Submitted a linkedin draft for review.",
       rationale: "Worth saying now.",
     });
-    await db.delete(drafts).run();
+    await db.delete(drafts);
 
     const res = await app.inject({
       method: "GET",

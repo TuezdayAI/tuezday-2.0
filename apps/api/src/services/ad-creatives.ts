@@ -106,8 +106,7 @@ export async function listAdCreativeSets(db: Db, workspaceId: string): Promise<A
         inArray(drafts.taskType, [...AD_CREATIVE_TASK_TYPES]),
       ),
     )
-    .orderBy(asc(drafts.createdAt))
-    .all();
+    .orderBy(asc(drafts.createdAt));
 
   const campaignById = new Map((await listCampaigns(db, workspaceId)).map((c) => [c.id, c]));
   const metricsByCampaign = new Map<string, CampaignAdMetrics | null>();

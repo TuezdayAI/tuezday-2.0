@@ -97,10 +97,9 @@ const script = (): ScriptedStep[] => [
 ];
 
 async function fixture() {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Asking", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Asking", createdAt: 1, updatedAt: 1 });
   await db.insert(signals)
     .values({
       id: SIGNAL_ID,
@@ -109,8 +108,7 @@ async function fixture() {
       source: "manual",
       sourceUrl: null,
       createdAt: 2,
-    })
-    .run();
+    });
   return { db, questions: createAgentQuestions({ db }) };
 }
 
@@ -161,7 +159,7 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
     expect(first.run.status).toBe("escalated");
     expect(first.run.pausedAtStepKey).toBe("draft");
     expect(first.run.escalationReason).toContain("needs_human");
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
 
     // 2. The question is durable, attached to the run, and carries what it
     //    takes to answer it in one click.
@@ -186,7 +184,7 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
     });
     expect(resumed.run.id).toBe(first.run.id);
     expect(resumed.run.status).toBe("succeeded");
-    expect(await db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(drafts)).toHaveLength(1);
 
     // 5. And the resumed step was actually told the answer (D-70.3) — the
     //    prompt carries it, which is why the model did not have to ask again.
@@ -207,7 +205,7 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
     const outcome = await startRun(db, deps, await definitionFor(db), "dry_run");
     expect(outcome.run.status).toBe("succeeded");
     // Nothing was recorded and nobody was asked.
-    expect(await db.select().from(agentQuestions).all()).toHaveLength(0);
+    expect(await db.select().from(agentQuestions)).toHaveLength(0);
   });
 
   it("does not offer the tool at all when nothing can answer it (D-70.7 shape)", async () => {

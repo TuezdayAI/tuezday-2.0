@@ -76,8 +76,7 @@ export async function listAgentQuestions(
       ),
     )
     .orderBy(desc(agentQuestions.createdAt))
-    .limit(Math.min(options.limit ?? 50, 100))
-    .all())
+    .limit(Math.min(options.limit ?? 50, 100)))
     .map(rowToAgentQuestion);
 }
 
@@ -86,11 +85,10 @@ export async function getAgentQuestion(
   workspaceId: string,
   questionId: string,
 ): Promise<AgentQuestion | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(agentQuestions)
-    .where(and(eq(agentQuestions.workspaceId, workspaceId), eq(agentQuestions.id, questionId)))
-    .get();
+    .where(and(eq(agentQuestions.workspaceId, workspaceId), eq(agentQuestions.id, questionId))))[0];
   return row ? rowToAgentQuestion(row) : undefined;
 }
 
@@ -100,8 +98,7 @@ export async function listQuestionsForAgentRun(db: Db, agentRunId: string): Prom
     .select()
     .from(agentQuestions)
     .where(eq(agentQuestions.agentRunId, agentRunId))
-    .orderBy(asc(agentQuestions.createdAt))
-    .all())
+    .orderBy(asc(agentQuestions.createdAt)))
     .map(rowToAgentQuestion);
 }
 
@@ -123,8 +120,7 @@ export async function listAnsweredQuestionsForPipelineRun(
         eq(agentQuestions.status, "answered"),
       ),
     )
-    .orderBy(asc(agentQuestions.createdAt))
-    .all())
+    .orderBy(asc(agentQuestions.createdAt)))
     .map(rowToAgentQuestion);
 }
 
@@ -133,26 +129,24 @@ export async function openQuestionForPipelineRun(
   db: Db,
   pipelineRunId: string,
 ): Promise<AgentQuestion | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(agentQuestions)
     .where(
       and(eq(agentQuestions.pipelineRunId, pipelineRunId), eq(agentQuestions.status, "open")),
     )
-    .orderBy(desc(agentQuestions.createdAt))
-    .get();
+    .orderBy(desc(agentQuestions.createdAt)))[0];
   return row ? rowToAgentQuestion(row) : undefined;
 }
 
 export async function countOpenQuestions(db: Db, workspaceId: string): Promise<number> {
   return (
-    (await db
+    ((await db
       .select({ count: sql<number>`count(*)` })
       .from(agentQuestions)
       .where(
         and(eq(agentQuestions.workspaceId, workspaceId), eq(agentQuestions.status, "open")),
-      )
-      .get())?.count ?? 0
+      ))[0])?.count ?? 0
   );
 }
 
@@ -179,8 +173,7 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
         .select()
         .from(agentQuestions)
         .where(scope)
-        .orderBy(asc(agentQuestions.createdAt))
-        .all();
+        .orderBy(asc(agentQuestions.createdAt));
 
       const sameQuestion = asked.find((row) => row.fingerprint === fingerprint);
       if (sameQuestion?.status === "answered" && sameQuestion.answer) {
@@ -234,8 +227,7 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
           answeredAt: null,
           ruleId: null,
           createdAt: Date.now(),
-        })
-        .run();
+        });
       return { status: "suspend", questionId: id };
     },
   };
@@ -316,8 +308,7 @@ export async function answerAgentQuestion(
       answeredAt: now,
       ruleId: rule?.id ?? null,
     })
-    .where(eq(agentQuestions.id, questionId))
-    .run();
+    .where(eq(agentQuestions.id, questionId));
 
   return { question: (await getAgentQuestion(db, workspaceId, questionId))!, rule };
 }

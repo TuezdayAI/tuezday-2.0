@@ -58,8 +58,7 @@ export async function runPipelinesTick(
       ),
     )
     .orderBy(asc(pipelineRuns.createdAt))
-    .limit(options.batch ?? PIPELINE_TICK_BATCH)
-    .all();
+    .limit(options.batch ?? PIPELINE_TICK_BATCH);
 
   const result: PipelinesTickResult = {
     processed: 0,

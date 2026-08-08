@@ -6,7 +6,7 @@ const FULLY_CONFIGURED: Record<string, string> = {
   GEMINI_API_KEY: "gemini-key",
   TUEZDAY_WORKER_TOKEN: "worker-token",
   APP_BASE_URL: "https://app.example.com",
-  TUEZDAY_DB: "/data/tuezday.db",
+  DATABASE_URL: "postgres://tuezday:secret@db.internal:5432/tuezday",
   RESEND_API_KEY: "resend-key",
   MAIL_FROM: "founder@example.com",
   EMAIL_UNSUBSCRIBE_SECRET: "unsubscribe-secret",
@@ -90,23 +90,23 @@ describe("validateProductionEnv", () => {
     });
   });
 
-  it("errors naming TUEZDAY_DB when it is missing (C1: must not fall back to a cwd-relative path)", () => {
+  it("errors naming DATABASE_URL when it is missing (C1: must not fall back to the local server)", () => {
     const { errors } = validateProductionEnv({
       ...FULLY_CONFIGURED,
-      TUEZDAY_DB: undefined,
+      DATABASE_URL: undefined,
     });
     expect(errors).toEqual(
-      expect.arrayContaining([expect.stringMatching(/TUEZDAY_DB/)]),
+      expect.arrayContaining([expect.stringMatching(/DATABASE_URL/)]),
     );
   });
 
-  it("errors naming TUEZDAY_DB when it is blank", () => {
+  it("errors naming DATABASE_URL when it is blank", () => {
     const { errors } = validateProductionEnv({
       ...FULLY_CONFIGURED,
-      TUEZDAY_DB: "   ",
+      DATABASE_URL: "   ",
     });
     expect(errors).toEqual(
-      expect.arrayContaining([expect.stringMatching(/TUEZDAY_DB/)]),
+      expect.arrayContaining([expect.stringMatching(/DATABASE_URL/)]),
     );
   });
 

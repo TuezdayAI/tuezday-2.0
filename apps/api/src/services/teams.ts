@@ -17,18 +17,16 @@ export async function membershipRole(
   workspaceId: string,
   userId: string,
 ): Promise<WorkspaceRole | undefined> {
-  const row = await db
+  const row = (await db
     .select({ role: workspaceMembers.role })
     .from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
-    .get();
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId))))[0];
   return row?.role as WorkspaceRole | undefined;
 }
 
 export async function addMember(db: Db, workspaceId: string, userId: string, role: WorkspaceRole): Promise<void> {
   await db.insert(workspaceMembers)
-    .values({ id: randomUUID(), workspaceId, userId, role, createdAt: Date.now() })
-    .run();
+    .values({ id: randomUUID(), workspaceId, userId, role, createdAt: Date.now() });
 }
 
 /**
@@ -37,11 +35,10 @@ export async function addMember(db: Db, workspaceId: string, userId: string, rol
  * Returns true if the claim happened.
  */
 export async function claimIfMemberless(db: Db, workspaceId: string, userId: string): Promise<boolean> {
-  const anyMember = await db
+  const anyMember = (await db
     .select({ id: workspaceMembers.id })
     .from(workspaceMembers)
-    .where(eq(workspaceMembers.workspaceId, workspaceId))
-    .get();
+    .where(eq(workspaceMembers.workspaceId, workspaceId)))[0];
   if (anyMember) return false;
   await addMember(db, workspaceId, userId, "owner");
   return true;
@@ -60,8 +57,7 @@ export async function listMembers(db: Db, workspaceId: string): Promise<Workspac
     .from(workspaceMembers)
     .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(eq(workspaceMembers.workspaceId, workspaceId))
-    .orderBy(asc(workspaceMembers.createdAt))
-    .all())
+    .orderBy(asc(workspaceMembers.createdAt)))
     .map((row) => ({ ...row, role: row.role as WorkspaceRole }));
 }
 
@@ -81,8 +77,7 @@ export async function listUserMemberships(db: Db, userId: string): Promise<UserM
     .from(workspaceMembers)
     .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
     .where(eq(workspaceMembers.userId, userId))
-    .orderBy(asc(workspaceMembers.createdAt))
-    .all())
+    .orderBy(asc(workspaceMembers.createdAt)))
     .map((row) => ({ ...row, role: row.role as WorkspaceRole }));
 }
 
@@ -95,13 +90,11 @@ export async function removeMember(db: Db, workspaceId: string, userId: string):
     const owners = await db
       .select({ id: workspaceMembers.id })
       .from(workspaceMembers)
-      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "owner")))
-      .all();
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, "owner")));
     if (owners.length <= 1) return "last_owner";
   }
   await db.delete(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
-    .run();
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
   return "removed";
 }
 
@@ -134,11 +127,11 @@ export async function createInvite(
   invitedBy: string,
 ): Promise<WorkspaceInvite> {
   const normalized = email.toLowerCase();
-  const existingUser = await db.select().from(users).where(eq(users.email, normalized)).get();
+  const existingUser = (await db.select().from(users).where(eq(users.email, normalized)))[0];
   if (existingUser && await membershipRole(db, workspaceId, existingUser.id)) {
     throw new AlreadyMemberError();
   }
-  const pending = await db
+  const pending = (await db
     .select({ id: workspaceInvites.id, expiresAt: workspaceInvites.expiresAt })
     .from(workspaceInvites)
     .where(
@@ -147,8 +140,7 @@ export async function createInvite(
         eq(workspaceInvites.email, normalized),
         eq(workspaceInvites.status, "pending"),
       ),
-    )
-    .get();
+    ))[0];
   if (pending && pending.expiresAt > Date.now()) throw new AlreadyInvitedError();
 
   const now = Date.now();
@@ -164,7 +156,7 @@ export async function createInvite(
     expiresAt: now + INVITE_TTL_MS,
     acceptedAt: null,
   };
-  await db.insert(workspaceInvites).values(row).run();
+  await db.insert(workspaceInvites).values(row);
   return rowToInvite(row);
 }
 
@@ -175,27 +167,24 @@ export async function listPendingInvites(db: Db, workspaceId: string): Promise<W
     .where(
       and(eq(workspaceInvites.workspaceId, workspaceId), eq(workspaceInvites.status, "pending")),
     )
-    .orderBy(asc(workspaceInvites.createdAt))
-    .all())
+    .orderBy(asc(workspaceInvites.createdAt)))
     .map(rowToInvite);
 }
 
 export async function revokeInvite(db: Db, workspaceId: string, inviteId: string): Promise<boolean> {
-  const row = await db
+  const row = (await db
     .select()
     .from(workspaceInvites)
-    .where(and(eq(workspaceInvites.id, inviteId), eq(workspaceInvites.workspaceId, workspaceId)))
-    .get();
+    .where(and(eq(workspaceInvites.id, inviteId), eq(workspaceInvites.workspaceId, workspaceId))))[0];
   if (!row || row.status !== "pending") return false;
   await db.update(workspaceInvites)
     .set({ status: "revoked" })
-    .where(eq(workspaceInvites.id, inviteId))
-    .run();
+    .where(eq(workspaceInvites.id, inviteId));
   return true;
 }
 
 export async function getInviteByToken(db: Db, token: string): Promise<WorkspaceInvite | undefined> {
-  const row = await db.select().from(workspaceInvites).where(eq(workspaceInvites.token, token)).get();
+  const row = (await db.select().from(workspaceInvites).where(eq(workspaceInvites.token, token)))[0];
   return row ? rowToInvite(row) : undefined;
 }
 
@@ -216,7 +205,6 @@ export async function acceptInvite(db: Db, token: string, user: User): Promise<A
   }
   await db.update(workspaceInvites)
     .set({ status: "accepted", acceptedAt: Date.now() })
-    .where(eq(workspaceInvites.id, invite.id))
-    .run();
+    .where(eq(workspaceInvites.id, invite.id));
   return { ok: true, workspaceId: invite.workspaceId, role: invite.role };
 }

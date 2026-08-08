@@ -43,8 +43,7 @@ export async function mintActionToken(
       action,
       expiresAt: exp,
       createdAt: Date.now(),
-    })
-    .run();
+    });
 
   return raw;
 }
@@ -76,11 +75,10 @@ export async function verifyAndBurn(db: Db, raw: string): Promise<VerifyResult> 
 
   // Look up by hash
   const tokenHash = sha256(raw);
-  const row = await db
+  const row = (await db
     .select()
     .from(approvalActionTokens)
-    .where(eq(approvalActionTokens.tokenHash, tokenHash))
-    .get();
+    .where(eq(approvalActionTokens.tokenHash, tokenHash)))[0];
 
   if (!row) return { ok: false, error: "invalid" };
   if (row.usedAt) return { ok: false, error: "used" };
@@ -89,8 +87,7 @@ export async function verifyAndBurn(db: Db, raw: string): Promise<VerifyResult> 
   // Burn: mark as used
   await db.update(approvalActionTokens)
     .set({ usedAt: Date.now() })
-    .where(eq(approvalActionTokens.id, row.id))
-    .run();
+    .where(eq(approvalActionTokens.id, row.id));
 
   return {
     ok: true,

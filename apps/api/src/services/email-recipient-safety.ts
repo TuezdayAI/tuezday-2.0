@@ -7,7 +7,7 @@ import {
   type UpdateEmailPermissionInput,
   type UpdateEmailSafetyInput,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import {
   emailDeliveries,
   emailRecipientPermissions,
@@ -15,7 +15,6 @@ import {
   workspaceEmailSenders,
 } from "../db/schema";
 import { listConnectedMailboxes } from "./mailboxes";
-
 export type EmailRecipientSafetyResult =
   | { ok: true; normalizedEmail: string }
   | {
@@ -43,7 +42,7 @@ export async function getEmailPermission(
 ): Promise<EmailRecipientPermission | null> {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
-  const row = await db
+  const row = (await db
     .select()
     .from(emailRecipientPermissions)
     .where(
@@ -51,8 +50,7 @@ export async function getEmailPermission(
         eq(emailRecipientPermissions.workspaceId, workspaceId),
         eq(emailRecipientPermissions.normalizedEmail, normalizedEmail),
       ),
-    )
-    .get();
+    ))[0];
   return row
     ? {
         workspaceId: row.workspaceId,
@@ -86,8 +84,7 @@ export async function updateEmailPermission(
       .onConflictDoUpdate({
         target: [emailRecipientPermissions.workspaceId, emailRecipientPermissions.normalizedEmail],
         set: { status: input.status, updatedAt: now },
-      })
-      .run();
+      });
 
     if (input.status === "suppressed") {
       await tx.insert(emailSuppressions)
@@ -100,8 +97,7 @@ export async function updateEmailPermission(
         })
         .onConflictDoNothing({
           target: [emailSuppressions.workspaceId, emailSuppressions.normalizedEmail],
-        })
-        .run();
+        });
     } else {
       await tx.delete(emailSuppressions)
         .where(
@@ -110,8 +106,7 @@ export async function updateEmailPermission(
             eq(emailSuppressions.normalizedEmail, normalizedEmail),
             eq(emailSuppressions.reason, "founder"),
           ),
-        )
-        .run();
+        );
     }
   });
   return (await getEmailPermission(db, workspaceId, normalizedEmail))!;
@@ -134,8 +129,7 @@ export async function unsubscribeEmailRecipient(db: Db, workspaceId: string, ema
       .onConflictDoUpdate({
         target: [emailRecipientPermissions.workspaceId, emailRecipientPermissions.normalizedEmail],
         set: { status: "suppressed", updatedAt: now },
-      })
-      .run();
+      });
     await tx.insert(emailSuppressions)
       .values({
         id: randomUUID(),
@@ -147,8 +141,7 @@ export async function unsubscribeEmailRecipient(db: Db, workspaceId: string, ema
       .onConflictDoUpdate({
         target: [emailSuppressions.workspaceId, emailSuppressions.normalizedEmail],
         set: { reason: "unsubscribe" },
-      })
-      .run();
+      });
   });
 }
 
@@ -175,9 +168,8 @@ export async function importSuppressions(
     const res = await db
       .insert(emailSuppressions)
       .values({ id: randomUUID(), workspaceId, normalizedEmail: parsed.data, reason: "import", createdAt: now })
-      .onConflictDoNothing()
-      .run();
-    if (res.changes > 0) imported += 1;
+      .onConflictDoNothing();
+    if (rowsAffected(res) > 0) imported += 1;
     else skipped += 1;
   }
   return { imported, skipped };
@@ -195,17 +187,15 @@ export async function listSuppressions(
       createdAt: emailSuppressions.createdAt,
     })
     .from(emailSuppressions)
-    .where(eq(emailSuppressions.workspaceId, workspaceId))
-    .all())
+    .where(eq(emailSuppressions.workspaceId, workspaceId)))
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function getEmailSafetySettings(db: Db, workspaceId: string): Promise<EmailSafetySettings> {
-  const row = await db
+  const row = (await db
     .select({ killSwitch: workspaceEmailSenders.killSwitch, dailyCap: workspaceEmailSenders.dailyCap })
     .from(workspaceEmailSenders)
-    .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-    .get();
+    .where(eq(workspaceEmailSenders.workspaceId, workspaceId)))[0];
   if (row) return row;
   // No Resend sender row: a Gmail-only workspace (Sprint 48) is still email-
   // enabled if it has a connected mailbox — connecting one is the explicit
@@ -221,16 +211,14 @@ export async function updateEmailSafetySettings(
   workspaceId: string,
   input: UpdateEmailSafetyInput,
 ): Promise<EmailSafetySettings> {
-  const existing = await db
+  const existing = (await db
     .select({ workspaceId: workspaceEmailSenders.workspaceId })
     .from(workspaceEmailSenders)
-    .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-    .get();
+    .where(eq(workspaceEmailSenders.workspaceId, workspaceId)))[0];
   if (!existing) throw new EmailSafetyConfigurationError();
   await db.update(workspaceEmailSenders)
     .set({ killSwitch: input.killSwitch, dailyCap: input.dailyCap, updatedAt: Date.now() })
-    .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-    .run();
+    .where(eq(workspaceEmailSenders.workspaceId, workspaceId));
   return await getEmailSafetySettings(db, workspaceId);
 }
 
@@ -256,7 +244,7 @@ export async function checkEmailRecipientSafety(
   }
 
   const sentToday = Number(
-    (await db
+    ((await db
       .select({ count: sql<number>`count(*)` })
       .from(emailDeliveries)
       .where(
@@ -265,8 +253,7 @@ export async function checkEmailRecipientSafety(
           inArray(emailDeliveries.status, ["accepted", "delivered"]),
           gte(emailDeliveries.acceptedAt, utcDayStart()),
         ),
-      )
-      .get())?.count ?? 0,
+      ))[0])?.count ?? 0,
   );
   if (sentToday >= settings.dailyCap) {
     return {
@@ -278,7 +265,7 @@ export async function checkEmailRecipientSafety(
     };
   }
 
-  const suppression = await db
+  const suppression = (await db
     .select({ id: emailSuppressions.id })
     .from(emailSuppressions)
     .where(
@@ -286,8 +273,7 @@ export async function checkEmailRecipientSafety(
         eq(emailSuppressions.workspaceId, workspaceId),
         eq(emailSuppressions.normalizedEmail, normalizedEmail),
       ),
-    )
-    .get();
+    ))[0];
   if (suppression) {
     return { ok: false, code: "suppressed", message: "This recipient is suppressed." };
   }

@@ -43,7 +43,7 @@ describe("pipeline routes (Sprint 64)", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: new ScriptedGateway(referenceScript(4)) });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Pipelines" } })
@@ -56,8 +56,7 @@ describe("pipeline routes (Sprint 64)", () => {
         source: "manual",
         sourceUrl: null,
         createdAt: Date.now(),
-      })
-      .run();
+      });
   });
 
   it("seeds and lists the reference definition, edits it into a new version, and activates it", async () => {
@@ -128,7 +127,7 @@ describe("pipeline routes (Sprint 64)", () => {
     expect(body.draftId).not.toBeNull();
     expect(body.checklist.map((entry) => entry.stepKey)).toContain("propose");
 
-    const draftRows = await db.select().from(drafts).all();
+    const draftRows = await db.select().from(drafts);
     expect(draftRows).toHaveLength(1);
     expect(draftRows[0]!.state).toBe("pending_review");
 
@@ -164,7 +163,7 @@ describe("pipeline routes (Sprint 64)", () => {
     const body = dryRun.json();
     expect(body.runs).toHaveLength(1);
     expect(body.runs[0].proposal.simulated).toBe(true);
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
 
     const list = await app.inject({
       method: "GET",

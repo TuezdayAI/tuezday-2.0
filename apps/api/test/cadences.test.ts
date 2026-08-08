@@ -132,7 +132,7 @@ describe("posting cadences", () => {
     vi.stubEnv("REDDIT_CLIENT_SECRET", "csecret");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(MONDAY_8AM_UTC);
-    db = createTestDb();
+    db = await createTestDb();
     state = fabricState();
     app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     workspaceId = (
@@ -469,8 +469,7 @@ describe("posting cadences", () => {
     ).json()[0];
     await db.update(publications)
       .set({ status: "failed", lastError: "RATELIMIT: slow down" })
-      .where(eq(publications.id, pub.id))
-      .run();
+      .where(eq(publications.id, pub.id));
 
     const now = MONDAY_8AM_UTC.getTime();
     const res = await app.inject({
@@ -649,7 +648,7 @@ describe("posting cadences", () => {
       ]);
       expect(body.issues[0].message.length).toBeLessThanOrEqual(500);
       expect(
-        await db.select().from(publications).where(eq(publications.draftId, invalidDraftId)).all(),
+        await db.select().from(publications).where(eq(publications.draftId, invalidDraftId)),
       ).toEqual([]);
     });
 
@@ -797,14 +796,12 @@ describe("posting cadences", () => {
     const approval = (await db
       .select()
       .from(approvalDecisions)
-      .where(eq(approvalDecisions.draftId, draftId))
-      .all())
+      .where(eq(approvalDecisions.draftId, draftId)))
       .find((row) => row.action === "approve")!;
     const decisions = await db
       .select()
       .from(externalActionDecisions)
-      .where(eq(externalActionDecisions.actionId, action.id))
-      .all();
+      .where(eq(externalActionDecisions.actionId, action.id));
     expect(decisions).toHaveLength(1);
     expect(decisions[0]).toMatchObject({
       decision: "authorize",
@@ -869,8 +866,7 @@ describe("posting cadences", () => {
     const refusal = (await db
       .select()
       .from(externalActionDecisions)
-      .where(eq(externalActionDecisions.actionId, collapsed.id))
-      .all())
+      .where(eq(externalActionDecisions.actionId, collapsed.id)))
       .find((row) => row.decision === "deny")!;
     expect(refusal.actorHuman).toBe(true);
 

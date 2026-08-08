@@ -5,37 +5,83 @@ import {
   type ExternalActionPolicyRule,
   type ExternalActionPolicyScope,
 } from "@tuezday/contracts";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import type pg from "pg";
 import { buildApp, type BuildAppOptions, type TuezdayApp } from "../src/app";
-import { migrationsFolder, schema, type Db } from "../src/db";
+import { closeDb, createDb, type Db } from "../src/db";
+import {
+  TEMPLATE_DB,
+  adminClient,
+  fixtureDatabaseName,
+  quoteIdent,
+  urlFor,
+} from "./postgres";
 
 /**
- * A schema template built by running the real checked-in migrations once per
- * worker process. Restoring a database from it costs a memory copy instead of
- * ~80 migration statements, which is the difference between a test fixture
- * that takes ~700ms and one that takes ~15ms. The migrations are still
- * executed on every run — just once rather than once per test.
+ * One maintenance connection per worker, opened on first use. Fixtures are
+ * created constantly, and a fresh connect() per fixture would cost more than
+ * the CREATE DATABASE it issues.
  */
-let schemaTemplate: Buffer | undefined;
+let admin: Promise<pg.Client> | undefined;
 
-function buildSchemaTemplate(): Buffer {
-  const seed = new Database(":memory:");
-  seed.pragma("foreign_keys = ON");
-  migrate(drizzle(seed, { schema }), { migrationsFolder });
-  const snapshot = seed.serialize();
-  seed.close();
-  return snapshot;
+/** Every fixture this worker opened, so the setup file can drop them per test file. */
+const fixtures: { name: string; url: string; db: Db }[] = [];
+
+/**
+ * Fresh Postgres database with all checked-in migrations applied.
+ *
+ * Cloned from the template the global setup built, so this costs a directory
+ * copy rather than replaying the baseline. The pool is small and drops idle
+ * connections quickly: a full run opens hundreds of fixtures, and the server's
+ * connection limit is the binding constraint, not throughput.
+ */
+export async function createTestDb(): Promise<Db> {
+  const name = fixtureDatabaseName();
+  admin ??= adminClient();
+  await (await admin).query(
+    `CREATE DATABASE ${quoteIdent(name)} TEMPLATE ${quoteIdent(TEMPLATE_DB)}`,
+  );
+  const url = urlFor(name);
+  const db = await createDb(url, { migrated: true, max: 4 });
+  fixtures.push({ name, url, db });
+  return db;
 }
 
-/** Fresh in-memory database with all checked-in migrations applied. */
-export function createTestDb(): Db {
-  schemaTemplate ??= buildSchemaTemplate();
-  const sqlite = new Database(schemaTemplate);
-  // A connection pragma, not part of the serialized file — set it every time.
-  sqlite.pragma("foreign_keys = ON");
-  return drizzle(sqlite, { schema });
+/**
+ * A second, independent pool onto an existing fixture: the Postgres equivalent
+ * of two API processes opening the same database file. Restart and
+ * two-instance-contention tests need genuinely separate connections, not a
+ * second handle on the same one.
+ */
+export async function connectTestDbAgain(db: Db): Promise<Db> {
+  const fixture = fixtures.find((f) => f.db === db);
+  if (!fixture) throw new Error("connectTestDbAgain: not a fixture from createTestDb()");
+  const second = await createDb(fixture.url, { migrated: true, max: 4 });
+  // Same name: the drop below is IF EXISTS, so the repeat is a no-op.
+  fixtures.push({ name: fixture.name, url: fixture.url, db: second });
+  return second;
+}
+
+/**
+ * Close and drop every fixture this worker opened. Called from the setup file's
+ * afterAll, which runs once per test file.
+ */
+export async function dropTestDbs(): Promise<void> {
+  const taken = fixtures.splice(0, fixtures.length);
+  if (taken.length === 0) return;
+  await Promise.all(taken.map(({ db }) => closeDb(db)));
+  const client = await (admin ??= adminClient());
+  for (const { name } of taken) {
+    // FORCE: a test that leaked a connection should not wedge the whole run.
+    await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`);
+  }
+}
+
+/** Close this worker's maintenance connection. */
+export async function closeTestAdmin(): Promise<void> {
+  if (!admin) return;
+  const client = await admin;
+  admin = undefined;
+  await client.end().catch(() => {});
 }
 
 export interface TestUser {

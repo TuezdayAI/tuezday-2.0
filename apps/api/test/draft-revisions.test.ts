@@ -18,12 +18,11 @@ describe("draft revision persistence", () => {
   let draftId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     workspaceId = randomUUID();
     draftId = randomUUID();
     await db.insert(workspaces)
-      .values({ id: workspaceId, name: "Editor", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: workspaceId, name: "Editor", createdAt: 1, updatedAt: 1 });
     await db.insert(drafts)
       .values({
         id: draftId,
@@ -43,8 +42,7 @@ describe("draft revision persistence", () => {
         mediaJson: null,
         createdAt: 2,
         updatedAt: 2,
-      })
-      .run();
+      });
   });
 
   function runningInput(requestId = randomUUID()) {

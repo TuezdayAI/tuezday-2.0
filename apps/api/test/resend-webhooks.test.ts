@@ -28,7 +28,7 @@ async function seedDelivery(db: Db): Promise<{ workspaceId: string; deliveryId: 
     onboardingStep: null,
     createdAt: now,
     updatedAt: now,
-  }).run();
+  });
   await db.insert(externalActions).values({
     id: actionId,
     workspaceId,
@@ -62,7 +62,7 @@ async function seedDelivery(db: Db): Promise<{ workspaceId: string; deliveryId: 
     authorizedAt: now,
     dispatchedAt: now,
     completedAt: now,
-  }).run();
+  });
   await db.insert(emailDeliveries).values({
     id: deliveryId,
     workspaceId,
@@ -84,7 +84,7 @@ async function seedDelivery(db: Db): Promise<{ workspaceId: string; deliveryId: 
     lastError: null,
     createdAt: now,
     updatedAt: now,
-  }).run();
+  });
   return { workspaceId, deliveryId };
 }
 
@@ -102,7 +102,7 @@ describe("Resend webhooks", () => {
   let verify: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await seedDelivery(db);
     verify = vi.fn((rawBody: string) => JSON.parse(rawBody));
     const verifier: ResendWebhookVerifier = { verify };
@@ -144,13 +144,13 @@ describe("Resend webhooks", () => {
     });
     const invalid = await post(payload("email.delivered"));
     expect(invalid.statusCode).toBe(400);
-    expect(await db.select().from(emailDeliveryEvents).all()).toHaveLength(0);
+    expect(await db.select().from(emailDeliveryEvents)).toHaveLength(0);
   });
 
   it("projects bounce outcomes and suppresses the recipient transactionally", async () => {
     await post(payload("email.bounced"));
-    expect(await db.select().from(emailDeliveries).get()).toMatchObject({ status: "bounced" });
-    expect(await db.select().from(emailSuppressions).get()).toMatchObject({
+    expect((await db.select().from(emailDeliveries))[0]).toMatchObject({ status: "bounced" });
+    expect((await db.select().from(emailSuppressions))[0]).toMatchObject({
       normalizedEmail: RECIPIENT,
       reason: "bounce",
     });
@@ -161,23 +161,23 @@ describe("Resend webhooks", () => {
     const duplicate = await post(payload("email.delivered"));
     expect(duplicate.statusCode).toBe(200);
     expect(duplicate.json()).toMatchObject({ received: true, duplicate: true });
-    expect(await db.select().from(emailDeliveryEvents).all()).toHaveLength(1);
+    expect(await db.select().from(emailDeliveryEvents)).toHaveLength(1);
   });
 
   it("stores late verified events without reversing terminal outcomes", async () => {
     await post(payload("email.bounced"), "msg_bounce");
     await post(payload("email.delivered"), "msg_late_delivered");
-    expect((await db.select().from(emailDeliveries).get())?.status).toBe("bounced");
-    expect(await db.select().from(emailDeliveryEvents).all()).toHaveLength(2);
+    expect(((await db.select().from(emailDeliveries))[0])?.status).toBe("bounced");
+    expect(await db.select().from(emailDeliveryEvents)).toHaveLength(2);
   });
 
   it("acknowledges and stores unknown verified types without changing delivery", async () => {
-    const before = (await db.select().from(emailDeliveries).get())?.status;
+    const before = ((await db.select().from(emailDeliveries))[0])?.status;
     const response = await post(payload("email.opened"), "msg_opened");
     expect(response.statusCode).toBe(200);
-    expect((await db.select().from(emailDeliveries).get())?.status).toBe(before);
+    expect(((await db.select().from(emailDeliveries))[0])?.status).toBe(before);
     expect(
-      await db.select().from(emailDeliveryEvents).where(eq(emailDeliveryEvents.providerEventId, "msg_opened")).get(),
+      (await db.select().from(emailDeliveryEvents).where(eq(emailDeliveryEvents.providerEventId, "msg_opened")))[0],
     ).toMatchObject({ eventType: "email.opened" });
   });
 });

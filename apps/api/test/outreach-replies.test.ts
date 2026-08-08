@@ -69,7 +69,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
   beforeEach(async () => {
     vi.stubEnv("EMAIL_UNSUBSCRIBE_SECRET", "unsub");
     vi.stubEnv("APP_BASE_URL", "https://app.test");
-    db = createTestDb();
+    db = await createTestDb();
     gmail = new FakeGmailProvider();
     mailer = new FakeMailer();
     app = await buildAuthedApp({ db, llm: fakeGateway(), gmail, mailer, workerToken: "wt" });
@@ -97,7 +97,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     await db.insert(connections).values({
       id, workspaceId, providerKey: "gmail", nangoConnectionId: `nango_${id}`, configJson: "{}",
       displayName: "Gmail", status: "connected", contentProfileJson: "{}", createdAt: now, updatedAt: now,
-    }).run();
+    });
     return id;
   }
 
@@ -110,7 +110,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
   async function allow(email: string): Promise<void> {
     await db.insert(emailRecipientPermissions).values({
       id: randomUUID(), workspaceId, normalizedEmail: email.toLowerCase(), status: "allowed", createdAt: Date.now(), updatedAt: Date.now(),
-    }).run();
+    });
   }
 
   async function activeSequence(email: string, steps = 2): Promise<{ seqId: string; enrollmentId: string }> {
@@ -132,7 +132,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     await app.inject({ method: "PUT", url: `/workspaces/${workspaceId}/outreach-sequences/${seqId}/mailboxes`, payload: { mailboxIds: [mailboxId] } });
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach-sequences/${seqId}/activate` });
     await run(); // step 1 sends → enrollment active
-    const enr = (await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get())!;
+    const enr = ((await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)))[0])!;
     return { seqId, enrollmentId: enr.id };
   }
 
@@ -146,11 +146,11 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
       kind: "email", channel: "email", externalId: `in_${randomUUID()}`, authorHandle: email, authorName: "R",
       content: body, status: "unread", replyLabel: label, replyLabeledAt: label ? Date.now() : null,
       externalCreatedAt: sinceMs + 1000, createdAt: Date.now(), updatedAt: Date.now(),
-    }).run();
+    });
   }
 
   async function enrollment(seqId: string) {
-    return (await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get())!;
+    return ((await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)))[0])!;
   }
 
   // --- Compliance -----------------------------------------------------------
@@ -189,7 +189,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     expect(result.stopped).toBe(1);
     expect((await enrollment(seqId)).status).toBe("stopped");
     expect((await enrollment(seqId)).stoppedReason).toBe("unsubscribed");
-    const sup = await db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId)).all();
+    const sup = await db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId));
     expect(sup.some((s) => s.normalizedEmail === "a@acme.io")).toBe(true);
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1); // step 2 never sent
   });
@@ -200,13 +200,13 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     await run();
     expect((await enrollment(seqId)).status).toBe("failed");
     expect((await enrollment(seqId)).stoppedReason).toBe("bounced");
-    const sup = await db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId)).all();
+    const sup = await db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId));
     expect(sup.some((s) => s.normalizedEmail === "a@acme.io" && s.reason === "bounce")).toBe(true);
   });
 
   it("positive reply → stops + notifies (email channel)", async () => {
     // Configure an email notification channel.
-    await db.insert(notificationChannels).values({ id: randomUUID(), workspaceId, type: "email", target: "founder@me.io", enabled: true, createdAt: Date.now() }).run();
+    await db.insert(notificationChannels).values({ id: randomUUID(), workspaceId, type: "email", target: "founder@me.io", enabled: true, createdAt: Date.now() });
     const { seqId } = await activeSequence("a@acme.io");
     await seedReply("a@acme.io", "positive", (await enrollment(seqId)).lastSentAt!, "Very interested, let's talk!");
     await run();

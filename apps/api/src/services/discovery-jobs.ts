@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, gt, lte, or, sql } from "drizzle-orm";
 import type { DiscoverySource } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import {
   discoveryJobs,
   discoverySources,
   type DiscoveryJobRow,
 } from "../db/schema";
 import { DATABASE_NOW_MS } from "./task-leases";
-
 /** Temporary Sprint 46 route compatibility; Task 4 replaces this with policy. */
 export const DISCOVERY_JOB_BATCH_SIZE = 5;
 export const DISCOVERY_JOB_LEASE_MS = 45_000;
@@ -48,7 +47,7 @@ export async function enqueueDueDiscoveryJobs(
   for (const source of sources) {
     if (!source.enabled || source.status === "reserved") continue;
     if (source.backoffUntil !== null && source.backoffUntil > now) continue;
-    const inserted = await db.run(sql`
+    const inserted = await db.execute(sql`
       INSERT INTO discovery_jobs (
         id,
         workspace_id,
@@ -92,7 +91,7 @@ export async function enqueueDueDiscoveryJobs(
         AND ${discoverySources.id} = ${source.id}
       ON CONFLICT DO NOTHING
     `);
-    queued += inserted.changes;
+    queued += rowsAffected(inserted);
   }
   return queued;
 }
@@ -111,7 +110,7 @@ export async function claimNextDiscoveryJob(
   },
 ): Promise<DiscoveryJobClaim | null> {
   return await db.transaction(async (tx) => {
-    const candidate = await tx
+    const candidate = (await tx
       .select()
       .from(discoveryJobs)
       .where(
@@ -129,11 +128,10 @@ export async function claimNextDiscoveryJob(
         ),
       )
       .orderBy(asc(discoveryJobs.createdAt), asc(discoveryJobs.id))
-      .limit(1)
-      .get();
+      .limit(1))[0];
     if (!candidate) return null;
 
-    const claimed = await tx
+    const claimed = (await tx
       .update(discoveryJobs)
       .set({
         status: "running",
@@ -160,8 +158,7 @@ export async function claimNextDiscoveryJob(
           ),
         ),
       )
-      .returning()
-      .get();
+      .returning())[0];
     return toClaim(claimed);
   });
 }
@@ -171,15 +168,14 @@ export async function heartbeatDiscoveryJob(
   claim: DiscoveryJobClaim,
   leaseMs: number,
 ): Promise<DiscoveryJobClaim | null> {
-  const renewed = await db
+  const renewed = (await db
     .update(discoveryJobs)
     .set({
       leaseExpiresAt: sql`${DATABASE_NOW_MS} + ${leaseMs}`,
       heartbeatAt: DATABASE_NOW_MS,
     })
     .where(liveClaimWhere(claim))
-    .returning()
-    .get();
+    .returning())[0];
   return toClaim(renewed);
 }
 
@@ -209,9 +205,8 @@ export async function completeDiscoveryJob(
       heartbeatAt: null,
       ...counts,
     })
-    .where(liveClaimWhere(claim))
-    .run();
-  return result.changes === 1;
+    .where(liveClaimWhere(claim));
+  return rowsAffected(result) === 1;
 }
 
 export async function failDiscoveryJob(
@@ -229,7 +224,6 @@ export async function failDiscoveryJob(
       leaseExpiresAt: null,
       heartbeatAt: null,
     })
-    .where(liveClaimWhere(claim))
-    .run();
-  return result.changes === 1;
+    .where(liveClaimWhere(claim));
+  return rowsAffected(result) === 1;
 }

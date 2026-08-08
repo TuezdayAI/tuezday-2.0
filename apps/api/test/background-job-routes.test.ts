@@ -23,7 +23,7 @@ describe("internal background job routes", () => {
   let userToken: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     const handlers = defineBackgroundJobHandlers(
       Object.fromEntries(
         BACKGROUND_JOB_KINDS.map((kind) => [

@@ -173,7 +173,7 @@ describe("connect social API", () => {
   beforeEach(async () => {
     state = fabricState();
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),
     });

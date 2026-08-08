@@ -153,7 +153,7 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
 
   beforeEach(async () => {
     nextLlmText = "Generated post text.";
-    db = createTestDb();
+    db = await createTestDb();
     design = fakeDesign();
     storage = fakeStorage();
     render = fakeRender();
@@ -320,7 +320,7 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
       const source = await approvedSourceDraft(CONTENT);
       const failing = fakeStorage({ failAfter: 2 });
       const app2 = await buildAuthedApp({
-        db: createTestDb(),
+        db: await createTestDb(),
         llm: fakeLlm,
         design: fakeDesign(),
         assetStorage: failing,
@@ -384,14 +384,13 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
     it("a successful run draws down exactly one generation and one flat ledger event", async () => {
       const source = await approvedSourceDraft(CONTENT);
       const count = async () =>
-        (await db.select().from(generations).all()).filter((g) => g.workspaceId === workspaceId).length;
+        (await db.select().from(generations)).filter((g) => g.workspaceId === workspaceId).length;
       const before = await count();
       await generateCarousel(source.id);
       expect(await count()).toBe(before + 1);
       const recorded = (await db
         .select()
-        .from(generations)
-        .all())
+        .from(generations))
         .filter((g) => g.workspaceId === workspaceId)
         .at(-1)!;
       expect(recorded.taskType).toBe("instagram_carousel");
@@ -399,8 +398,7 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
       // Sprint 59: the design daemon's LLM is metered as a flat-cost event.
       const event = (await db
         .select()
-        .from(llmUsageEvents)
-        .all())
+        .from(llmUsageEvents))
         .filter((e) => e.workspaceId === workspaceId)
         .at(-1)!;
       expect(event).toMatchObject({ pipeline: "design_render", costCents: 1 });

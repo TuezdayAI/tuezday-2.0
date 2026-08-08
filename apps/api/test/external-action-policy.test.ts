@@ -60,7 +60,7 @@ describe("external action policy", () => {
   }
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Policy Lab" } })
@@ -115,8 +115,7 @@ describe("external action policy", () => {
     const laneId = randomUUID();
     const laneRevisionId = randomUUID();
     await db.insert(personas)
-      .values({ id: personaId, workspaceId, name: "Founder", createdAt: now, updatedAt: now })
-      .run();
+      .values({ id: personaId, workspaceId, name: "Founder", createdAt: now, updatedAt: now });
     await db.insert(connections)
       .values({
         id: connectionId,
@@ -125,8 +124,7 @@ describe("external action policy", () => {
         nangoConnectionId: randomUUID(),
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     await db.insert(campaignPlanRevisions)
       .values({
         id: planRevisionId,
@@ -135,8 +133,7 @@ describe("external action policy", () => {
         revision: 1,
         status: "active",
         createdAt: now,
-      })
-      .run();
+      });
     await db.insert(campaignLanes)
       .values({
         id: laneId,
@@ -146,8 +143,7 @@ describe("external action policy", () => {
         name: "Founder LinkedIn",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     await db.insert(campaignLaneRevisions)
       .values({
         id: laneRevisionId,
@@ -160,8 +156,7 @@ describe("external action policy", () => {
         publishingConnectionId: connectionId,
         deliveryMode: "scheduled",
         createdAt: now,
-      })
-      .run();
+      });
 
     await replacePolicy("campaign", campaignId, { publish: "autonomous" });
     await replacePolicy("lane", laneRevisionId, { publish: "human_required" });
@@ -189,8 +184,7 @@ describe("external action policy", () => {
     const otherWorkspaceId = randomUUID();
     const protectedPersonaId = randomUUID();
     await db.insert(workspaces)
-      .values({ id: otherWorkspaceId, name: "Other", createdAt: now, updatedAt: now })
-      .run();
+      .values({ id: otherWorkspaceId, name: "Other", createdAt: now, updatedAt: now });
     await db.insert(personas)
       .values({
         id: protectedPersonaId,
@@ -198,8 +192,7 @@ describe("external action policy", () => {
         name: "Protected",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     expect(async () =>
       await upsertExternalActionPolicies(
@@ -217,8 +210,7 @@ describe("external action policy", () => {
 
     const localPersonaId = randomUUID();
     await db.insert(personas)
-      .values({ id: localPersonaId, workspaceId, name: "Sensitive", createdAt: now, updatedAt: now })
-      .run();
+      .values({ id: localPersonaId, workspaceId, name: "Sensitive", createdAt: now, updatedAt: now });
     expect(async () =>
       await upsertExternalActionPolicies(
         db,
@@ -348,19 +340,17 @@ describe("external action policy", () => {
   });
 
   it("backfills pre-existing workspaces once when the app starts", async () => {
-    const coldDb = createTestDb();
+    const coldDb = await createTestDb();
     const now = Date.now();
     const coldWorkspaceId = randomUUID();
     await coldDb.insert(workspaces)
-      .values({ id: coldWorkspaceId, name: "Cold start", createdAt: now, updatedAt: now })
-      .run();
+      .values({ id: coldWorkspaceId, name: "Cold start", createdAt: now, updatedAt: now });
 
     const coldApp = await buildAuthedApp({ db: coldDb });
     expect(
       (await coldDb
         .select()
-        .from(externalActionPolicyRules)
-        .all())
+        .from(externalActionPolicyRules))
         .filter((row) => row.workspaceId === coldWorkspaceId),
     ).toHaveLength(6);
     await coldApp.close();

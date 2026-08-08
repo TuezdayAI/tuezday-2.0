@@ -63,7 +63,7 @@ describe("Sprint 67 — eval routes", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({
       db,
       llm: dualGateway([...caseScript(CLEAN), ...caseScript(CLEAN)]),

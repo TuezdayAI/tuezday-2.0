@@ -25,17 +25,17 @@ import { backfillMetrics } from "../src/services/metrics-backfill";
 async function seed(db: Db) {
   const now = Date.now();
   const workspaceId = randomUUID();
-  await db.insert(workspaces).values({ id: workspaceId, name: "WS", createdAt: now, updatedAt: now }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "WS", createdAt: now, updatedAt: now });
   return { workspaceId, now };
 }
 
 async function facts(db: Db, workspaceId: string) {
-  return await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+  return await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId));
 }
 
 describe("backfillMetrics", () => {
   it("maps each store with its real semantics and is idempotent", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, now } = await seed(db);
 
     // Legacy manual reading (point) — one null metric, which must produce no row.
@@ -52,8 +52,7 @@ describe("backfillMetrics", () => {
         notes: "",
         recordedAt: now - 100_000,
         createdAt: now - 100_000,
-      })
-      .run();
+      });
 
     // Legacy publication snapshot (cumulative at 24h). publications requires a
     // real draft + connection (NOT NULL FKs), so seed the minimal chain.
@@ -72,8 +71,7 @@ describe("backfillMetrics", () => {
         originalContent: "post",
         createdAt: publishedAt,
         updatedAt: publishedAt,
-      })
-      .run();
+      });
     await db.insert(connections)
       .values({
         id: connId,
@@ -84,8 +82,7 @@ describe("backfillMetrics", () => {
         configJson: "{}",
         createdAt: publishedAt,
         updatedAt: publishedAt,
-      })
-      .run();
+      });
     await db.insert(publications)
       .values({
         id: pubId,
@@ -100,8 +97,7 @@ describe("backfillMetrics", () => {
         scheduledFor: publishedAt,
         createdAt: publishedAt,
         updatedAt: publishedAt,
-      })
-      .run();
+      });
     await db.insert(publicationMetrics)
       .values({
         id: randomUUID(),
@@ -115,8 +111,7 @@ describe("backfillMetrics", () => {
         clicks: null,
         capturedAt: publishedAt + 25 * 60 * 60 * 1000,
         createdAt: publishedAt + 25 * 60 * 60 * 1000,
-      })
-      .run();
+      });
 
     // Legacy ad daily bucket.
     const accountId = randomUUID();
@@ -131,8 +126,7 @@ describe("backfillMetrics", () => {
         lastSyncedAt: null,
         lastError: null,
         createdAt: now,
-      })
-      .run();
+      });
     const adCampaignId = randomUUID();
     await db.insert(adCampaigns)
       .values({
@@ -144,8 +138,7 @@ describe("backfillMetrics", () => {
         campaignId: null,
         lastSyncedAt: now,
         createdAt: now,
-      })
-      .run();
+      });
     await db.insert(adCampaignMetrics)
       .values({
         id: randomUUID(),
@@ -159,8 +152,7 @@ describe("backfillMetrics", () => {
         source: "csv",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     const first = await backfillMetrics(db);
     const rows = await facts(db, workspaceId);
@@ -202,7 +194,7 @@ describe("backfillMetrics", () => {
   });
 
   it("never clobbers a fresher dual-written value on the same grain", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, now } = await seed(db);
 
     const accountId = randomUUID();
@@ -217,8 +209,7 @@ describe("backfillMetrics", () => {
         lastSyncedAt: null,
         lastError: null,
         createdAt: now,
-      })
-      .run();
+      });
     const adCampaignId = randomUUID();
     await db.insert(adCampaigns)
       .values({
@@ -230,8 +221,7 @@ describe("backfillMetrics", () => {
         campaignId: null,
         lastSyncedAt: now,
         createdAt: now,
-      })
-      .run();
+      });
     // Legacy row holds a STALE value…
     await db.insert(adCampaignMetrics)
       .values({
@@ -246,8 +236,7 @@ describe("backfillMetrics", () => {
         source: "sync",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     // …while the dual-write already recorded the fresh one on the same grain.
     await db.insert(metrics)
       .values({
@@ -262,16 +251,14 @@ describe("backfillMetrics", () => {
         source: "synced",
         capturedAt: now,
         createdAt: now,
-      })
-      .run();
+      });
 
     await backfillMetrics(db);
 
     const spend = await db
       .select()
       .from(metrics)
-      .where(and(eq(metrics.workspaceId, workspaceId), eq(metrics.metricKey, "spend")))
-      .all();
+      .where(and(eq(metrics.workspaceId, workspaceId), eq(metrics.metricKey, "spend")));
     expect(spend).toHaveLength(1);
     expect(spend[0]!.value).toBe(2000); // the fresher value survives
   });

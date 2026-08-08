@@ -327,7 +327,7 @@ export type DraftRow = typeof drafts.$inferSelect;
 
 export const approvalDecisions = pgTable("approval_decisions", {
   /** Insertion order; breaks same-millisecond ties (replaces SQLite rowid). */
-  seq: bigserial("seq", { mode: "number" }).notNull(),
+  seq: bigserial("seq", { mode: "number" }),
   id: text("id").primaryKey(),
   draftId: text("draft_id")
     .notNull()
@@ -2582,7 +2582,7 @@ export const chatMessages = pgTable(
   "chat_messages",
   {
     /** Insertion order; breaks same-millisecond ties (replaces SQLite rowid). */
-    seq: bigserial("seq", { mode: "number" }).notNull(),
+    seq: bigserial("seq", { mode: "number" }),
     id: text("id").primaryKey(),
     sessionId: text("session_id")
       .notNull()
@@ -3627,7 +3627,7 @@ export const pipelineRunSteps = pgTable(
   "pipeline_run_steps",
   {
     /** Insertion order; breaks same-millisecond ties (replaces SQLite rowid). */
-    seq: bigserial("seq", { mode: "number" }).notNull(),
+    seq: bigserial("seq", { mode: "number" }),
     id: text("id").primaryKey(),
     runId: text("run_id")
       .notNull()
@@ -3674,7 +3674,7 @@ export const pipelineShadowPairs = pgTable(
   "pipeline_shadow_pairs",
   {
     /** Insertion order; breaks same-millisecond ties (replaces SQLite rowid). */
-    seq: bigserial("seq", { mode: "number" }).notNull(),
+    seq: bigserial("seq", { mode: "number" }),
     id: text("id").primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
@@ -3716,7 +3716,7 @@ export const pipelineRolloutDecisions = pgTable(
   "pipeline_rollout_decisions",
   {
     /** Insertion order; breaks same-millisecond ties (replaces SQLite rowid). */
-    seq: bigserial("seq", { mode: "number" }).notNull(),
+    seq: bigserial("seq", { mode: "number" }),
     id: text("id").primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()

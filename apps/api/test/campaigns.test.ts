@@ -38,7 +38,7 @@ describe("campaigns API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeGateway });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Campy" } })

@@ -52,12 +52,11 @@ describe("campaign plan backfill (Sprint 53)", () => {
     return (await db
       .select()
       .from(campaignPlanRevisions)
-      .where(eq(campaignPlanRevisions.campaignId, campaignId))
-      .all()).length;
+      .where(eq(campaignPlanRevisions.campaignId, campaignId))).length;
   }
 
   it("gives every planless campaign an active plan carrying its legacy strategy", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, campaignIds } = await seedCampaigns(db, ["Alpha", "Beta", "Gamma"]);
 
     const summary = await backfillMissingCampaignPlans(db);
@@ -81,7 +80,7 @@ describe("campaign plan backfill (Sprint 53)", () => {
   });
 
   it("is idempotent — a second sweep creates no duplicate or spurious revision", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, campaignIds } = await seedCampaigns(db, ["Alpha", "Beta"]);
 
     await backfillMissingCampaignPlans(db);
@@ -102,7 +101,7 @@ describe("campaign plan backfill (Sprint 53)", () => {
   });
 
   it("leaves a campaign that already has a human-authored plan untouched", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { app, workspaceId, campaignIds } = await seedCampaigns(db, ["Curated"]);
     const campaignId = campaignIds[0]!;
     const created = await app.inject({
@@ -121,7 +120,7 @@ describe("campaign plan backfill (Sprint 53)", () => {
   });
 
   it("runs at boot, so an existing database is planned without an operator", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, campaignIds } = await seedCampaigns(db, ["Legacy"]);
     const campaignId = campaignIds[0]!;
     expect(await getCurrentCampaignPlan(db, workspaceId, campaignId)).toBeUndefined();
@@ -138,7 +137,7 @@ describe("campaign plan backfill (Sprint 53)", () => {
   });
 
   it("sweeps every workspace, not just the first", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const app = await buildApp({ db });
     apps.push(app);
     const one = asUser(app, (await registerUser(app, "one@test.dev", "one")).token);

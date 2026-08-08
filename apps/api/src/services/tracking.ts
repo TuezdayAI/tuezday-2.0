@@ -12,11 +12,10 @@ import { emailDeliveries, outreachTrackingEvents } from "../db/schema";
  */
 
 async function deliveryWorkspace(db: Db, deliveryId: string): Promise<string | null> {
-  const row = await db
+  const row = (await db
     .select({ workspaceId: emailDeliveries.workspaceId })
     .from(emailDeliveries)
-    .where(eq(emailDeliveries.id, deliveryId))
-    .get();
+    .where(eq(emailDeliveries.id, deliveryId)))[0];
   return row?.workspaceId ?? null;
 }
 
@@ -29,8 +28,7 @@ export async function recordOpen(db: Db, deliveryId: string, nowMs: number): Pro
       openedAt: sql`COALESCE(${emailDeliveries.openedAt}, ${nowMs})`,
       updatedAt: nowMs,
     })
-    .where(eq(emailDeliveries.id, deliveryId))
-    .run();
+    .where(eq(emailDeliveries.id, deliveryId));
   await db.insert(outreachTrackingEvents)
     .values({
       id: randomUUID(),
@@ -40,8 +38,7 @@ export async function recordOpen(db: Db, deliveryId: string, nowMs: number): Pro
       targetUrl: null,
       occurredAt: nowMs,
       createdAt: nowMs,
-    })
-    .run();
+    });
 }
 
 export async function recordClick(db: Db, deliveryId: string, url: string, nowMs: number): Promise<void> {
@@ -53,8 +50,7 @@ export async function recordClick(db: Db, deliveryId: string, url: string, nowMs
       firstClickAt: sql`COALESCE(${emailDeliveries.firstClickAt}, ${nowMs})`,
       updatedAt: nowMs,
     })
-    .where(eq(emailDeliveries.id, deliveryId))
-    .run();
+    .where(eq(emailDeliveries.id, deliveryId));
   await db.insert(outreachTrackingEvents)
     .values({
       id: randomUUID(),
@@ -64,6 +60,5 @@ export async function recordClick(db: Db, deliveryId: string, url: string, nowMs
       targetUrl: url,
       occurredAt: nowMs,
       createdAt: nowMs,
-    })
-    .run();
+    });
 }

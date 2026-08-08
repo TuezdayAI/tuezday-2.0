@@ -8,7 +8,7 @@ describe("brain API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb() });
+    app = await buildAuthedApp({ db: await createTestDb() });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",

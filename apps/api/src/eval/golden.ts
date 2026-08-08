@@ -4,7 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveContext } from "@tuezday/brain";
 import type { EvalRunMetrics } from "@tuezday/contracts";
-import { createDb, type Db } from "../db";
+import type { Db } from "../db";
+import { createEphemeralDb } from "../db/ephemeral";
 import { drafts, signals, workspaces } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { ScriptedGateway } from "../llm/scripted";
@@ -78,8 +79,7 @@ async function seedWorkspace(db: Db): Promise<string> {
   const workspaceId = randomUUID();
   const now = SEED_BASE;
   await db.insert(workspaces)
-    .values({ id: workspaceId, name: "Golden", createdAt: now, updatedAt: now })
-    .run();
+    .values({ id: workspaceId, name: "Golden", createdAt: now, updatedAt: now });
   for (const phrase of GOLDEN_BANNED_CLAIMS) {
     await addBannedClaim(db, workspaceId, { phrase, note: "" });
   }
@@ -101,8 +101,7 @@ async function seedWorkspace(db: Db): Promise<string> {
         suggestedPersonaId: null,
         suggestedCampaignId: null,
         createdAt: stamp,
-      })
-      .run();
+      });
     await db.insert(drafts)
       .values({
         id: randomUUID(),
@@ -123,8 +122,7 @@ async function seedWorkspace(db: Db): Promise<string> {
         mediaJson: null,
         createdAt: stamp,
         updatedAt: stamp,
-      })
-      .run();
+      });
   }
   return workspaceId;
 }
@@ -137,7 +135,17 @@ function transcript(gateway: ScriptedGateway): string[] {
 }
 
 export async function runGoldenSuite(): Promise<GoldenOutcome> {
-  const db = createDb(":memory:");
+  // Postgres has no `:memory:`; the suite gets a real database of its own and
+  // drops it on the way out.
+  const ephemeral = await createEphemeralDb();
+  try {
+    return await runGoldenSuiteAgainst(ephemeral.db);
+  } finally {
+    await ephemeral.release();
+  }
+}
+
+async function runGoldenSuiteAgainst(db: Db): Promise<GoldenOutcome> {
   const workspaceId = await seedWorkspace(db);
 
   await ensurePipelineDefinitions(db, workspaceId);

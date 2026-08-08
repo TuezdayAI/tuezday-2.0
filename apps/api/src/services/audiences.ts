@@ -11,7 +11,7 @@ import {
   type SegmentRuleGroup,
   type UpsertAudienceInput,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import {
   audienceMembers,
   audiences,
@@ -20,7 +20,6 @@ import {
   leads,
   type AudienceRow,
 } from "../db/schema";
-
 // ---------------------------------------------------------------------------
 // The people pool: all leads + CRM contacts not yet linked to a lead. The
 // single source for the picker, dynamic-segment evaluation, and member
@@ -32,14 +31,12 @@ export async function loadPeople(db: Db, workspaceId: string): Promise<Person[]>
     .select()
     .from(leads)
     .where(eq(leads.workspaceId, workspaceId))
-    .orderBy(desc(leads.createdAt))
-    .all();
+    .orderBy(desc(leads.createdAt));
   const contactRows = (await db
     .select()
     .from(crmContacts)
     .where(eq(crmContacts.workspaceId, workspaceId))
-    .orderBy(desc(crmContacts.lastSyncedAt))
-    .all())
+    .orderBy(desc(crmContacts.lastSyncedAt)))
     .filter((c) => !c.leadId);
 
   const people: Person[] = [];
@@ -84,11 +81,10 @@ async function rowToAudience(db: Db, row: AudienceRow): Promise<Audience> {
 }
 
 async function getAudienceRow(db: Db, workspaceId: string, audienceId: string): Promise<AudienceRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(audiences)
-    .where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, audienceId)))
-    .get();
+    .where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, audienceId))))[0];
 }
 
 export async function createAudience(db: Db, workspaceId: string, input: UpsertAudienceInput): Promise<Audience> {
@@ -103,7 +99,7 @@ export async function createAudience(db: Db, workspaceId: string, input: UpsertA
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(audiences).values(row).run();
+  await db.insert(audiences).values(row);
   return await rowToAudience(db, row);
 }
 
@@ -112,8 +108,7 @@ export async function listAudiences(db: Db, workspaceId: string): Promise<Audien
       .select()
       .from(audiences)
       .where(eq(audiences.workspaceId, workspaceId))
-      .orderBy(desc(audiences.createdAt))
-      .all())
+      .orderBy(desc(audiences.createdAt)))
       .map(async (row) => await rowToAudience(db, row)));
 }
 
@@ -153,14 +148,13 @@ export async function updateAudience(
       rulesJson: input.rules ? JSON.stringify(input.rules) : null,
       updatedAt: Date.now(),
     })
-    .where(eq(audiences.id, audienceId))
-    .run();
+    .where(eq(audiences.id, audienceId));
   return await getAudience(db, workspaceId, audienceId);
 }
 
 export async function deleteAudience(db: Db, workspaceId: string, audienceId: string): Promise<boolean> {
   if (!await getAudienceRow(db, workspaceId, audienceId)) return false;
-  await db.delete(audiences).where(eq(audiences.id, audienceId)).run();
+  await db.delete(audiences).where(eq(audiences.id, audienceId));
   return true;
 }
 
@@ -186,8 +180,7 @@ export async function resolveAudienceMembers(
       .select()
       .from(audienceMembers)
       .where(eq(audienceMembers.audienceId, audience.id))
-      .orderBy(asc(audienceMembers.addedAt))
-      .all();
+      .orderBy(asc(audienceMembers.addedAt));
     const members: AudienceMember[] = [];
     for (const row of rows) {
       const person = byKey.get(`${row.memberType}:${row.memberId}`);
@@ -234,8 +227,7 @@ export async function addAudienceMembers(
     (await db
       .select()
       .from(audienceMembers)
-      .where(eq(audienceMembers.audienceId, audienceId))
-      .all())
+      .where(eq(audienceMembers.audienceId, audienceId)))
       .map((r) => `${r.memberType}:${r.memberId}`),
   );
 
@@ -251,12 +243,11 @@ export async function addAudienceMembers(
         memberType: ref.type,
         memberId: ref.id,
         addedAt: now,
-      })
-      .run();
+      });
     existing.add(`${ref.type}:${ref.id}`);
     added++;
   }
-  await db.update(audiences).set({ updatedAt: now }).where(eq(audiences.id, audienceId)).run();
+  await db.update(audiences).set({ updatedAt: now }).where(eq(audiences.id, audienceId));
   return { ok: true, added };
 }
 
@@ -277,12 +268,11 @@ export async function removeAudienceMember(
         eq(audienceMembers.memberType, memberType),
         eq(audienceMembers.memberId, memberId),
       ),
-    )
-    .run();
-  if (result.changes > 0) {
-    await db.update(audiences).set({ updatedAt: Date.now() }).where(eq(audiences.id, audienceId)).run();
+    );
+  if (rowsAffected(result) > 0) {
+    await db.update(audiences).set({ updatedAt: Date.now() }).where(eq(audiences.id, audienceId));
   }
-  return result.changes > 0;
+  return rowsAffected(result) > 0;
 }
 
 /** Drop a lead from every static list it sits in — called when a lead is deleted. */
@@ -294,8 +284,7 @@ export async function removeLeadFromAudiences(db: Db, workspaceId: string, leadI
         eq(audienceMembers.memberType, "lead"),
         eq(audienceMembers.memberId, leadId),
       ),
-    )
-    .run();
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -313,8 +302,7 @@ export async function listCampaignAudiences(
     .where(
       and(eq(campaignAudiences.workspaceId, workspaceId), eq(campaignAudiences.campaignId, campaignId)),
     )
-    .orderBy(asc(campaignAudiences.createdAt))
-    .all();
+    .orderBy(asc(campaignAudiences.createdAt));
 
   const result: CampaignAudience[] = [];
   for (const { audienceId } of rows) {
@@ -339,7 +327,7 @@ export async function attachAudience(
   audienceId: string,
 ): Promise<AttachResult> {
   if (!await getAudienceRow(db, workspaceId, audienceId)) return { ok: false, error: "audience_not_found" };
-  const already = await db
+  const already = (await db
     .select()
     .from(campaignAudiences)
     .where(
@@ -347,8 +335,7 @@ export async function attachAudience(
         eq(campaignAudiences.campaignId, campaignId),
         eq(campaignAudiences.audienceId, audienceId),
       ),
-    )
-    .get();
+    ))[0];
   if (!already) {
     await db.insert(campaignAudiences)
       .values({
@@ -357,8 +344,7 @@ export async function attachAudience(
         campaignId,
         audienceId,
         createdAt: Date.now(),
-      })
-      .run();
+      });
   }
   return { ok: true };
 }
@@ -377,7 +363,6 @@ export async function detachAudience(
         eq(campaignAudiences.campaignId, campaignId),
         eq(campaignAudiences.audienceId, audienceId),
       ),
-    )
-    .run();
-  return result.changes > 0;
+    );
+  return rowsAffected(result) > 0;
 }

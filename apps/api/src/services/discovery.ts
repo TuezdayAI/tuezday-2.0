@@ -34,7 +34,7 @@ import {
   type UpdateDiscoverySourceInput,
 } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   discoveredItems,
   discoveredItemMatches,
@@ -103,7 +103,6 @@ import {
 } from "./matching";
 import { listPersonas } from "./personas";
 import { insertSignalRow, readSignal } from "./signals";
-
 // ---------------------------------------------------------------------------
 // Sources
 // ---------------------------------------------------------------------------
@@ -154,7 +153,7 @@ export async function getDiscoverySourceExecution(
   workspaceId: string,
   sourceId: string,
 ): Promise<DiscoverySourceExecution | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(discoverySources)
     .where(
@@ -162,8 +161,7 @@ export async function getDiscoverySourceExecution(
         eq(discoverySources.workspaceId, workspaceId),
         eq(discoverySources.id, sourceId),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToSourceExecution(row) : undefined;
 }
 
@@ -381,7 +379,7 @@ export async function createDiscoverySource(
     executionVersion: 1,
     createdAt: Date.now(),
   };
-  await db.insert(discoverySources).values(row).run();
+  await db.insert(discoverySources).values(row);
   return rowToSource(row);
 }
 
@@ -390,8 +388,7 @@ export async function listDiscoverySources(db: Db, workspaceId: string): Promise
     .select()
     .from(discoverySources)
     .where(eq(discoverySources.workspaceId, workspaceId))
-    .orderBy(desc(discoverySources.createdAt))
-    .all())
+    .orderBy(desc(discoverySources.createdAt)))
     .map(rowToSource);
 }
 
@@ -400,11 +397,10 @@ export async function getDiscoverySource(
   workspaceId: string,
   sourceId: string,
 ): Promise<DiscoverySource | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(discoverySources)
-    .where(and(eq(discoverySources.workspaceId, workspaceId), eq(discoverySources.id, sourceId)))
-    .get();
+    .where(and(eq(discoverySources.workspaceId, workspaceId), eq(discoverySources.id, sourceId))))[0];
   return row ? rowToSource(row) : undefined;
 }
 
@@ -509,8 +505,7 @@ export async function updateDiscoverySource(
           eq(discoverySources.workspaceId, workspaceId),
           eq(discoverySources.id, sourceId),
         ),
-      )
-      .run();
+      );
     if (executionChanged) {
       await tx.update(discoveryJobs)
         .set({
@@ -528,8 +523,7 @@ export async function updateDiscoverySource(
             eq(discoveryJobs.sourceId, sourceId),
             inArray(discoveryJobs.status, ["queued", "running"]),
           ),
-        )
-        .run();
+        );
     }
     return await getDiscoverySource(tx, workspaceId, sourceId);
   });
@@ -579,8 +573,7 @@ async function countDuplicatesByCanonical(db: Db, workspaceId: string): Promise<
     .where(
       and(eq(discoveredItems.workspaceId, workspaceId), isNotNull(discoveredItems.duplicateOfId)),
     )
-    .groupBy(discoveredItems.duplicateOfId)
-    .all();
+    .groupBy(discoveredItems.duplicateOfId);
   const map = new Map<string, number>();
   for (const row of rows) {
     if (row.duplicateOfId) map.set(row.duplicateOfId, row.count);
@@ -600,8 +593,7 @@ export async function listDiscoveredItems(
     .select()
     .from(discoveredItems)
     .where(where)
-    .orderBy(sql`${discoveredItems.score} DESC NULLS LAST`, desc(discoveredItems.createdAt))
-    .all();
+    .orderBy(sql`${discoveredItems.score} DESC NULLS LAST`, desc(discoveredItems.createdAt));
   const matchesByItem = await listItemMatchesForItems(
     db,
     workspaceId,
@@ -618,14 +610,13 @@ export async function getDiscoveredItem(
   workspaceId: string,
   itemId: string,
 ): Promise<DiscoveredItem | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(discoveredItems)
-    .where(and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.id, itemId)))
-    .get();
+    .where(and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.id, itemId))))[0];
   if (!row) return undefined;
   const duplicateCount =
-    (await db
+    ((await db
       .select({ count: sql<number>`COUNT(*)` })
       .from(discoveredItems)
       .where(
@@ -633,8 +624,7 @@ export async function getDiscoveredItem(
           eq(discoveredItems.workspaceId, workspaceId),
           eq(discoveredItems.duplicateOfId, itemId),
         ),
-      )
-      .get())?.count ?? 0;
+      ))[0])?.count ?? 0;
   return rowToItem(
     row,
     await listItemMatches(db, workspaceId, itemId),
@@ -663,8 +653,7 @@ export async function listItemDuplicates(db: Db, workspaceId: string, itemId: st
     .where(
       and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.duplicateOfId, itemId)),
     )
-    .orderBy(asc(discoveredItems.createdAt))
-    .all();
+    .orderBy(asc(discoveredItems.createdAt));
 }
 
 const SIGNAL_SOURCE_BY_TYPE: Record<DiscoverySourceType, SignalSource> = {
@@ -742,7 +731,7 @@ export async function acceptDiscoveredItem(
     }
     const source = await getDiscoverySource(tx, workspaceId, item.sourceId);
     if (!source) throw new DiscoveryReferenceNotFoundError();
-    const foreignItemMatch = await tx
+    const foreignItemMatch = (await tx
       .select({ id: discoveredItemMatches.id })
       .from(discoveredItemMatches)
       .where(
@@ -750,8 +739,7 @@ export async function acceptDiscoveredItem(
           eq(discoveredItemMatches.itemId, item.id),
           ne(discoveredItemMatches.workspaceId, workspaceId),
         ),
-      )
-      .get();
+      ))[0];
     if (foreignItemMatch) throw new DiscoveryReferenceNotFoundError();
     const itemMatches = await tx
       .select({
@@ -770,8 +758,7 @@ export async function acceptDiscoveredItem(
       .orderBy(
         desc(discoveredItemMatches.score),
         asc(discoveredItemMatches.createdAt),
-      )
-      .all();
+      );
     // Sprint 53: the item's routing *is* its match rows. `item.suggested*` is a
     // projection of `itemMatches` (join-filtered to live personas/campaigns), so
     // there is nothing left to synthesize — validating the raw rows validates
@@ -806,8 +793,7 @@ export async function acceptDiscoveredItem(
           eq(discoveredItems.status, "new"),
           eq(discoveredItems.matchingState, "ready"),
         ),
-      )
-      .run();
+      );
     hooks?.afterItemUpdate?.();
     const signal = await readSignal(tx, workspaceId, signalRow.id);
     if (!signal) throw new Error("Accepted discovery signal could not be read.");
@@ -850,8 +836,7 @@ export async function skipDiscoveredItem(
           eq(discoveredItems.id, item.id),
           eq(discoveredItems.status, "new"),
         ),
-      )
-      .run();
+      );
     return {
       ...current,
       status: "skipped",
@@ -902,7 +887,7 @@ async function findCanonicalItem(
 ): Promise<{ id: string } | undefined> {
   const hashMatches = [eq(discoveredItems.contentHash, contentHash)];
   if (urlHash) hashMatches.push(eq(discoveredItems.urlHash, urlHash));
-  return await db
+  return (await db
     .select({ id: discoveredItems.id })
     .from(discoveredItems)
     .where(
@@ -914,8 +899,7 @@ async function findCanonicalItem(
       ),
     )
     .orderBy(asc(discoveredItems.createdAt))
-    .limit(1)
-    .get();
+    .limit(1))[0];
 }
 
 // Rate-limit back-pressure (Sprint 46): consecutive rate_limited failures
@@ -930,8 +914,7 @@ async function rateLimitBackoffMs(db: Db, sourceId: string): Promise<number> {
     .from(discoveryJobs)
     .where(and(eq(discoveryJobs.sourceId, sourceId), inArray(discoveryJobs.status, ["succeeded", "failed"])))
     .orderBy(desc(discoveryJobs.createdAt))
-    .limit(10)
-    .all();
+    .limit(10);
   let streak = 0;
   for (const job of recent) {
     if (job.status === "failed" && job.error === "rate_limited") streak += 1;
@@ -1045,7 +1028,7 @@ async function sourceClaimIsLive(
   claim: DiscoveryJobClaim,
 ): Promise<boolean> {
   return Boolean(
-    await db
+    (await db
       .select({ id: discoveryJobs.id })
       .from(discoveryJobs)
       .where(
@@ -1056,8 +1039,7 @@ async function sourceClaimIsLive(
           eq(discoveryJobs.leaseVersion, claim.leaseVersion),
           gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
         ),
-      )
-      .get(),
+      ))[0],
   );
 }
 
@@ -1102,7 +1084,7 @@ export async function persistDiscoveryPage(
       if (!await sourceClaimIsLive(tx, claim)) {
         throw new DiscoveryCheckpointFenceError();
       }
-      const currentSourceRow = await tx
+      const currentSourceRow = (await tx
         .select()
         .from(discoverySources)
         .where(
@@ -1114,8 +1096,7 @@ export async function persistDiscoveryPage(
               claim.sourceExecutionVersion,
             ),
           ),
-        )
-        .get();
+        ))[0];
       if (!currentSourceRow) throw new DiscoveryCheckpointFenceError();
       const currentSource = rowToSourceExecution(currentSourceRow);
       let currentTargets: ReturnType<typeof targetsForSource>;
@@ -1157,7 +1138,7 @@ export async function persistDiscoveryPage(
         const id = randomUUID();
         const urlHash = hashUrl(item.url);
         const contentHash = hashContent(item.title, item.summary);
-        const insertedRow = await tx
+        const insertedRow = (await tx
           .insert(discoveredItems)
           .values({
             id,
@@ -1186,8 +1167,7 @@ export async function persistDiscoveryPage(
               discoveredItems.externalId,
             ],
           })
-          .returning({ id: discoveredItems.id })
-          .get();
+          .returning({ id: discoveredItems.id }))[0];
         hooks?.afterOccurrenceInsert?.(index);
 
         // Sprint 60 shadow layer: record the immutable occurrence and resolve
@@ -1233,8 +1213,7 @@ export async function persistDiscoveryPage(
               matchingLeaseExpiresAt: null,
               matchingHeartbeatAt: null,
             })
-            .where(eq(discoveredItems.id, id))
-            .run();
+            .where(eq(discoveredItems.id, id));
         }
         inserted += 1;
       }
@@ -1260,9 +1239,8 @@ export async function persistDiscoveryPage(
               claim.sourceExecutionVersion,
             ),
           ),
-        )
-        .run();
-      if (sourceUpdated.changes !== 1) {
+        );
+      if (rowsAffected(sourceUpdated) !== 1) {
         throw new DiscoveryCheckpointFenceError();
       }
 
@@ -1282,9 +1260,8 @@ export async function persistDiscoveryPage(
             eq(discoveryJobs.leaseVersion, claim.leaseVersion),
             gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
           ),
-        )
-        .run();
-      if (jobUpdated.changes !== 1) {
+        );
+      if (rowsAffected(jobUpdated) !== 1) {
         throw new DiscoveryCheckpointFenceError();
       }
       return { inserted, fetched: page.items.length };
@@ -1304,7 +1281,7 @@ async function persistPermissionCheckpoint(
   return await db.transaction(async (tx) => {
     if (!await sourceClaimIsLive(tx, claim)) return false;
     return (
-      (await tx
+      rowsAffected((await tx
         .update(discoverySources)
         .set({
           cursorJson: JSON.stringify(cursor),
@@ -1319,8 +1296,7 @@ async function persistPermissionCheckpoint(
               claim.sourceExecutionVersion,
             ),
           ),
-        )
-        .run()).changes === 1
+        ))) === 1
     );
   });
 }
@@ -1431,8 +1407,7 @@ async function writeSourceFailure(
           eq(discoverySources.id, source.id),
           eq(discoverySources.executionVersion, source.executionVersion),
         ),
-      )
-      .run();
+      );
     return;
   }
   const isBudget =
@@ -1450,8 +1425,7 @@ async function writeSourceFailure(
         eq(discoverySources.id, source.id),
         eq(discoverySources.executionVersion, source.executionVersion),
       ),
-    )
-    .run();
+    );
 }
 
 function resultWithMetrics(

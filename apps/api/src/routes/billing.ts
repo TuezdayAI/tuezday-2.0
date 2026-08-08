@@ -129,11 +129,10 @@ export function registerStripeWebhookRoute(app: FastifyInstance, db: Db): void {
           // In real implementation we should lookup the workspaceId by stripeSubscriptionId.
           // For simplicity we will assume it's stored in metadata of the subscription if possible, 
           // but we can query by stripeSubscriptionId using db.
-          const sub = await db
+          const sub = (await db
             .select()
             .from(subscriptions)
-            .where(eq(subscriptions.stripeSubscriptionId, subscription.id))
-            .get();
+            .where(eq(subscriptions.stripeSubscriptionId, subscription.id)))[0];
 
           if (sub) {
             await upsertFromStripe(db, sub.workspaceId, {

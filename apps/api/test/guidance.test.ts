@@ -27,7 +27,7 @@ describe("channel guidance API (Sprint 21)", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: fakeGateway() });
     const res = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Guide" } });
     workspaceId = res.json().id;
   });
@@ -178,7 +178,7 @@ describe("scoped guidance (Sprint 44)", () => {
   let campaignId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: fakeGateway() });
     const ws = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Scoped" } });
     workspaceId = ws.json().id;
     const persona = await app.inject({

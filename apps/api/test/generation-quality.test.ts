@@ -42,7 +42,7 @@ describe("generation quality (Sprint 22)", () => {
   let workspaceId: string;
 
   async function setup(llm: LlmGateway) {
-    app = await buildAuthedApp({ db: createTestDb(), llm });
+    app = await buildAuthedApp({ db: await createTestDb(), llm });
     const res = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "QA" } });
     workspaceId = res.json().id;
     await app.inject({

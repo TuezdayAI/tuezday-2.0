@@ -37,7 +37,7 @@ async function createWorkspace(name = "Inspector"): Promise<string> {
 
 describe("agent run routes", () => {
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: proofScript() });
   });
 

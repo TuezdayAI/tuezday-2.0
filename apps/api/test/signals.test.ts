@@ -28,7 +28,7 @@ describe("signals API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Signals Co" } })
@@ -137,14 +137,13 @@ describe("signals API", () => {
         expect(foreign.json()).toEqual({ error: "related_object_not_found" });
         expect(foreign.json()).toEqual(unknown.json());
         expect(
-          await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+          await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
         ).toHaveLength(0);
         expect(
           await db
             .select()
             .from(signalMatches)
-            .where(eq(signalMatches.workspaceId, workspaceId))
-            .all(),
+            .where(eq(signalMatches.workspaceId, workspaceId)),
         ).toHaveLength(0);
       },
     );
@@ -221,7 +220,7 @@ describe("signals API", () => {
 
     it("returns 502 and stores nothing when the provider fails", async () => {
       const failApp = await buildAuthedApp({
-        db: createTestDb(),
+        db: await createTestDb(),
         llm: {
           async generate() {
             throw new GatewayError("provider_error", "boom");
@@ -272,7 +271,7 @@ describe("signals API", () => {
      * gateway-invocation counts these tests assert on.
      */
     async function buildMatchingApp(llm: LlmGateway) {
-      const db = createTestDb();
+      const db = await createTestDb();
       const matchApp = await buildAuthedApp({ db, llm });
       const wsId = (
         await matchApp.inject({ method: "POST", url: "/workspaces", payload: { name: "Match Co" } })
@@ -368,14 +367,13 @@ describe("signals API", () => {
           ),
         ).rejects.toThrow(fault);
         expect(
-          await db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+          await db.select().from(signals).where(eq(signals.workspaceId, wsId)),
         ).toHaveLength(0);
         expect(
           await db
             .select()
             .from(signalMatches)
-            .where(eq(signalMatches.workspaceId, wsId))
-            .all(),
+            .where(eq(signalMatches.workspaceId, wsId)),
         ).toHaveLength(0);
         await matchApp.close();
       },
@@ -401,14 +399,13 @@ describe("signals API", () => {
       );
 
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, wsId)),
       ).toHaveLength(1);
       expect(
         await db
           .select()
           .from(signalMatches)
-          .where(eq(signalMatches.workspaceId, wsId))
-          .all(),
+          .where(eq(signalMatches.workspaceId, wsId)),
       ).toHaveLength(1);
       expect(created).toMatchObject({
         suggestedPersonaId: personaId,
@@ -507,14 +504,13 @@ describe("signals API", () => {
           },
         ]);
         expect(
-          await db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+          await db.select().from(signals).where(eq(signals.workspaceId, wsId)),
         ).toHaveLength(1);
         expect(
           await db
             .select()
             .from(signalMatches)
-            .where(eq(signalMatches.workspaceId, wsId))
-            .all(),
+            .where(eq(signalMatches.workspaceId, wsId)),
         ).toHaveLength(1);
         await matchApp.close();
       },
@@ -556,19 +552,17 @@ describe("signals API", () => {
       // top-scoring match — nothing is stored on the signal row itself.
       expect(signal.suggestedPersonaId).toBe(personaId);
       expect(signal.suggestedCampaignId).toBe(campaignId);
-      const storedRow = (await db
+      const storedRow = ((await db
         .select()
         .from(signals)
-        .where(eq(signals.id, signal.id))
-        .get())!;
+        .where(eq(signals.id, signal.id)))[0])!;
       expect(storedRow.suggestedPersonaId).toBeNull();
       expect(storedRow.suggestedCampaignId).toBeNull();
       // and it is backed by a real signal_matches row
       const rows = await db
         .select()
         .from(signalMatches)
-        .where(eq(signalMatches.signalId, signal.id))
-        .all();
+        .where(eq(signalMatches.signalId, signal.id));
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ personaId, campaignId, score: 74 });
       await matchApp.close();
@@ -655,13 +649,12 @@ describe("signals API", () => {
       const rows = await db
         .select()
         .from(signalMatches)
-        .where(eq(signalMatches.signalId, signal.id))
-        .all();
+        .where(eq(signalMatches.signalId, signal.id));
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ personaId, campaignId, score: 100 });
 
       // ...with nothing written to the legacy columns...
-      const stored = (await db.select().from(signals).where(eq(signals.id, signal.id)).get())!;
+      const stored = ((await db.select().from(signals).where(eq(signals.id, signal.id)))[0])!;
       expect(stored.suggestedPersonaId).toBeNull();
       expect(stored.suggestedCampaignId).toBeNull();
 
@@ -700,7 +693,7 @@ describe("signals API", () => {
       ).json();
       expect(signal.suggestedPersonaId).toBe(personaId);
 
-      await db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id)).run();
+      await db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id));
 
       const listed = (
         await matchApp.inject({ method: "GET", url: `/workspaces/${wsId}/signals` })
@@ -763,8 +756,7 @@ describe("signals API", () => {
       ).json().id as string;
       await db.update(signalMatches)
         .set({ workspaceId: otherWorkspaceId })
-        .where(eq(signalMatches.signalId, signal.id))
-        .run();
+        .where(eq(signalMatches.signalId, signal.id));
 
       const listed = (
         await app.inject({
@@ -804,8 +796,7 @@ describe("signals API", () => {
       ).json();
       await db.update(signalMatches)
         .set({ personaId: foreignPersona.id })
-        .where(eq(signalMatches.signalId, signal.id))
-        .run();
+        .where(eq(signalMatches.signalId, signal.id));
 
       const listed = (
         await app.inject({

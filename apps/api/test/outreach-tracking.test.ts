@@ -194,7 +194,7 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     vi.stubEnv("EMAIL_UNSUBSCRIBE_SECRET", "secret");
     vi.stubEnv("APP_BASE_URL", "https://app.test");
     vi.stubEnv("TRACKING_BASE_URL", "https://track.test");
-    db = createTestDb();
+    db = await createTestDb();
     gmail = new FakeGmailProvider();
     app = await buildAuthedApp({ db, llm: fakeGateway(), gmail, workerToken: WORKER_TOKEN });
     workspaceId = (await app.inject({ method: "POST", url: "/workspaces", payload: { name: "WS" } })).json().id;
@@ -234,7 +234,7 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
       contentProfileJson: "{}",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     return id;
   }
 
@@ -275,7 +275,7 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
       status: "allowed",
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
   }
 
   async function makeSequence(opts: { audienceId: string; mailboxIds: string[]; trackOpens?: boolean; trackClicks?: boolean }): Promise<string> {
@@ -317,8 +317,8 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach/run` });
     expect(run.statusCode).toBe(200);
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1);
-    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.origin, "outreach_step")).get())!;
-    const enrollment = (await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get())!;
+    const delivery = ((await db.select().from(emailDeliveries).where(eq(emailDeliveries.origin, "outreach_step")))[0])!;
+    const enrollment = ((await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)))[0])!;
     return { seqId, deliveryId: delivery.id, enrollmentId: enrollment.id };
   }
 
@@ -347,10 +347,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("image/gif");
     expect(res.headers["cache-control"]).toBe("no-store");
-    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get())!;
+    const delivery = ((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)))[0])!;
     expect(delivery.openCount).toBe(1);
     expect(delivery.openedAt).toBeTruthy();
-    const events = await db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.emailDeliveryId, deliveryId)).all();
+    const events = await db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.emailDeliveryId, deliveryId));
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("open");
   });
@@ -361,10 +361,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     const res = await app.inject({ method: "GET", url: `/t/c/${token}` });
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toBe(LINK);
-    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get())!;
+    const delivery = ((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)))[0])!;
     expect(delivery.clickCount).toBe(1);
     expect(delivery.firstClickAt).toBeTruthy();
-    const events = await db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.type, "click")).all();
+    const events = await db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.type, "click"));
     expect(events).toHaveLength(1);
     expect(events[0]!.targetUrl).toBe(LINK);
   });
@@ -378,10 +378,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     // A garbage token records nothing.
     const bad = await app.inject({ method: "GET", url: `/t/o/not-a-real-token` });
     expect(bad.statusCode).toBe(400);
-    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get())!;
+    const delivery = ((await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)))[0])!;
     expect(delivery.openCount).toBe(0);
     expect(delivery.clickCount).toBe(0);
-    expect(await db.select().from(outreachTrackingEvents).all()).toHaveLength(0);
+    expect(await db.select().from(outreachTrackingEvents)).toHaveLength(0);
   });
 
   it("assembles the funnel: sent/opened/clicked/replied/positive + manual outcome", async () => {
@@ -409,7 +409,7 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
       externalCreatedAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
 
     // Mark the enrollment a meeting through the route.
     const outcome = await app.inject({

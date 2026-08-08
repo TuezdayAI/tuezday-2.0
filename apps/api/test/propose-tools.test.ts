@@ -29,8 +29,8 @@ function toolsFor(ctx: ToolContext) {
 }
 
 describe("propose tools through the adapter (Sprint 69)", () => {
-  it("declares all five to the model with a derivable schema", () => {
-    const tools = toolsFor(context(createTestDb()));
+  it("declares all five to the model with a derivable schema", async () => {
+    const tools = toolsFor(context(await createTestDb()));
     for (const name of PROPOSE_TOOL_NAMES) {
       const tool = tools.get(name);
       expect(tool, name).toBeDefined();
@@ -40,7 +40,7 @@ describe("propose tools through the adapter (Sprint 69)", () => {
   });
 
   it("returns invalid arguments as data, not as a thrown step failure", async () => {
-    const tools = toolsFor(context(createTestDb()));
+    const tools = toolsFor(context(await createTestDb()));
     const result = (await tools.get("propose_draft")!.handler({ content: "hi" })) as {
       error?: string;
       issues?: string[];
@@ -50,7 +50,7 @@ describe("propose tools through the adapter (Sprint 69)", () => {
   });
 
   it("shares one proposal budget across every propose tool (D-69.8)", async () => {
-    const tools = toolsFor(context(createTestDb()));
+    const tools = toolsFor(context(await createTestDb()));
     const calls = [
       () => tools.get("propose_draft")!.handler({ content: "a", channel: "linkedin", rationale: "r" }),
       () => tools.get("propose_reply")!.handler({ inboxItemId: "i-1", rationale: "r" }),
@@ -67,7 +67,7 @@ describe("propose tools through the adapter (Sprint 69)", () => {
   });
 
   it("does not spend the proposal budget on read tools", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const tools = toolsFor(context(db, { budget: { maxCalls: 20, maxProposals: 1 } }));
     await tools.get("list_channel_guardrails")!.handler({});
     await tools.get("list_channel_guardrails")!.handler({});
@@ -78,7 +78,7 @@ describe("propose tools through the adapter (Sprint 69)", () => {
   });
 
   it("refuses rather than writing when no propose seam was injected (D-69.7)", async () => {
-    const ctx = context(createTestDb());
+    const ctx = context(await createTestDb());
     delete (ctx as { proposals?: AgentProposalService }).proposals;
     const tools = toolsFor(ctx);
     const result = (await tools
@@ -89,7 +89,7 @@ describe("propose tools through the adapter (Sprint 69)", () => {
   });
 
   it("tells the model plainly that a simulated proposal changed nothing", async () => {
-    const tools = toolsFor(context(createTestDb()));
+    const tools = toolsFor(context(await createTestDb()));
     const result = (await tools
       .get("propose_draft")!
       .handler({ content: "a", channel: "linkedin", rationale: "r" })) as {
@@ -116,7 +116,7 @@ describe("propose tools through the adapter (Sprint 69)", () => {
         };
       },
     };
-    const tools = toolsFor(context(createTestDb(), { proposals: stub }));
+    const tools = toolsFor(context(await createTestDb(), { proposals: stub }));
     const result = (await tools
       .get("propose_draft")!
       .handler({ content: "a", channel: "linkedin", rationale: "r" })) as { note?: string };

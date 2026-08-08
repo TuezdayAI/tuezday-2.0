@@ -12,7 +12,7 @@ describe("auth API", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildApp({ db });
   });
 
@@ -142,7 +142,7 @@ describe("auth API", () => {
 
     it("rejects an expired session with 401", async () => {
       const user = await registerUser(app);
-      await db.update(sessions).set({ expiresAt: Date.now() - 1000 }).where(eq(sessions.userId, user.id)).run();
+      await db.update(sessions).set({ expiresAt: Date.now() - 1000 }).where(eq(sessions.userId, user.id));
       const res = await app.inject({
         method: "GET",
         url: "/auth/me",

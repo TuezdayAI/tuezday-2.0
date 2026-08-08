@@ -38,7 +38,7 @@ import { AgentRunner } from "../agents/runner";
 import { simulatedAgentProposals, type AgentProposalService } from "../agents/proposals";
 import { simulatedAgentQuestions, type AgentQuestionService } from "../agents/questions";
 import { ALL_TOOLS } from "../agents/tools/index";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import {
   pipelineDefinitions,
   pipelineDefinitionVersions,
@@ -65,7 +65,6 @@ import { recordRuleApplications, retrievePreferenceRules } from "./preference-ru
 import { retrievePriorExamples } from "./prior-examples";
 import { getSignal, listSignals } from "./signals";
 import { getWorkspace } from "./workspaces";
-
 // Queue-only creation lives in pipeline-runs.ts (leaf, no agent imports) so
 // enqueuing services never load the engine. Re-exported for existing callers.
 export {
@@ -162,8 +161,7 @@ async function loadEngineState(db: Db, run: PipelineRunRow): Promise<EngineState
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, run.id))
-    .orderBy(asc(pipelineRunSteps.seq))
-    .all();
+    .orderBy(asc(pipelineRunSteps.seq));
   const state: EngineState = {
     runId: run.id,
     workspaceId: run.workspaceId,
@@ -215,16 +213,14 @@ async function insertStepRow(
       finishedAt: null,
       createdAt: Date.now(),
       ...values,
-    })
-    .run();
+    });
   return id;
 }
 
 async function finishStepRow(db: Db, id: string, values: Partial<PipelineRunStepRow>): Promise<void> {
   await db.update(pipelineRunSteps)
     .set({ finishedAt: Date.now(), ...values })
-    .where(eq(pipelineRunSteps.id, id))
-    .run();
+    .where(eq(pipelineRunSteps.id, id));
 }
 
 function composeStepSystem(
@@ -333,7 +329,7 @@ async function runAgentStepPass(
   // at attempt 1 would collide with the row that recorded why it stopped. The
   // per-execution bound below is unchanged; only the numbering carries over.
   const priorAttempts =
-    (await db
+    ((await db
       .select({ used: sql<number>`coalesce(max(${pipelineRunSteps.attempt}), 0)` })
       .from(pipelineRunSteps)
       .where(
@@ -342,8 +338,7 @@ async function runAgentStepPass(
           eq(pipelineRunSteps.stepKey, step.key),
           eq(pipelineRunSteps.iteration, iteration),
         ),
-      )
-      .get())?.used ?? 0;
+      ))[0])?.used ?? 0;
 
   let lastFailure = "unknown";
   for (let pass = 1; pass <= STEP_MAX_ATTEMPTS; pass += 1) {
@@ -512,15 +507,14 @@ async function runTotals(db: Db, runId: string): Promise<{
       outputTokens: number;
       costCents: number;
     }> {
-  const totals = await db
+  const totals = (await db
     .select({
       inputTokens: sql<number>`coalesce(sum(${pipelineRunSteps.inputTokens}), 0)`,
       outputTokens: sql<number>`coalesce(sum(${pipelineRunSteps.outputTokens}), 0)`,
       costCents: sql<number>`coalesce(sum(${pipelineRunSteps.costCents}), 0)`,
     })
     .from(pipelineRunSteps)
-    .where(eq(pipelineRunSteps.runId, runId))
-    .get();
+    .where(eq(pipelineRunSteps.runId, runId)))[0];
   return totals ?? { inputTokens: 0, outputTokens: 0, costCents: 0 };
 }
 
@@ -544,12 +538,11 @@ async function finishRun(
     ...(status === "escalated" ? {} : { finishedAt: Date.now() }),
     ...values,
   };
-  await db.update(pipelineRuns).set(patch).where(eq(pipelineRuns.id, run.id)).run();
-  const updated = await db
+  await db.update(pipelineRuns).set(patch).where(eq(pipelineRuns.id, run.id));
+  const updated = (await db
     .select()
     .from(pipelineRuns)
-    .where(eq(pipelineRuns.id, run.id))
-    .get();
+    .where(eq(pipelineRuns.id, run.id)))[0];
   return rowToRun(updated!);
 }
 
@@ -703,11 +696,10 @@ export async function executePipelineRun(
   workspaceId: string,
   runId: string,
 ): Promise<ExecutePipelineRunResult> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(pipelineRuns)
-    .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId)))
-    .get();
+    .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId))))[0];
   if (!existing) throw new PipelineRunNotFoundError(runId);
 
   if (await llmBudgetExhausted(db, workspaceId)) {
@@ -733,14 +725,13 @@ export async function executePipelineRun(
         eq(pipelineRuns.id, runId),
         sql`(${pipelineRuns.status} IN ('queued', 'escalated') OR (${pipelineRuns.status} = 'running' AND ${pipelineRuns.leaseExpiresAt} < ${now}))`,
       ),
-    )
-    .run();
-  if (claimed.changes === 0) {
+    );
+  if (rowsAffected(claimed) === 0) {
     return { blocked: "not_claimable", run: rowToRun(existing) };
   }
-  const run = (await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get())!;
+  const run = ((await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)))[0])!;
 
-  const versionRow = await db
+  const versionRow = (await db
     .select()
     .from(pipelineDefinitionVersions)
     .where(
@@ -748,8 +739,7 @@ export async function executePipelineRun(
         eq(pipelineDefinitionVersions.definitionId, run.definitionId),
         eq(pipelineDefinitionVersions.version, run.definitionVersion),
       ),
-    )
-    .get();
+    ))[0];
   if (!versionRow) {
     const state = await loadEngineState(db, run);
     return { run: await finishRun(db, run, "failed", state, { failureReason: "definition_version_missing" }) };
@@ -776,11 +766,10 @@ export async function executePipelineRun(
     channel: run.channel as Channel,
     taskType: "signal_response",
   });
-  const definitionRow = await db
+  const definitionRow = (await db
     .select({ name: pipelineDefinitions.name })
     .from(pipelineDefinitions)
-    .where(eq(pipelineDefinitions.id, run.definitionId))
-    .get();
+    .where(eq(pipelineDefinitions.id, run.definitionId)))[0];
   const definitionName = definitionRow?.name ?? run.taskKey;
   const metered = meteredLlm(deps.llm, db, {
     workspaceId,
@@ -961,19 +950,17 @@ export async function listPipelineRuns(
   if (options.status) conditions.push(eq(pipelineRuns.status, options.status));
   const where = and(...conditions);
   const total =
-    (await db
+    ((await db
       .select({ count: sql<number>`count(*)` })
       .from(pipelineRuns)
-      .where(where)
-      .get())?.count ?? 0;
+      .where(where))[0])?.count ?? 0;
   const runs = (await db
     .select()
     .from(pipelineRuns)
     .where(where)
     .orderBy(desc(pipelineRuns.createdAt))
     .limit(Math.min(options.limit ?? 20, 100))
-    .offset(options.offset ?? 0)
-    .all())
+    .offset(options.offset ?? 0))
     .map(rowToRun);
   return { runs, total };
 }
@@ -983,18 +970,16 @@ export async function getPipelineRunDetail(
   workspaceId: string,
   runId: string,
 ): Promise<PipelineRunDetail | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(pipelineRuns)
-    .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId)))
-    .get();
+    .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId))))[0];
   if (!row) return undefined;
   const steps = (await db
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, runId))
-    .orderBy(asc(pipelineRunSteps.seq))
-    .all())
+    .orderBy(asc(pipelineRunSteps.seq)))
     .map(rowToStep);
   return { ...rowToRun(row), steps };
 }
@@ -1007,11 +992,10 @@ export async function decidePipelineRun(
   runId: string,
   input: { action: "resume" | "cancel"; reason?: string },
 ): Promise<ExecutePipelineRunResult> {
-  const row = await db
+  const row = (await db
     .select()
     .from(pipelineRuns)
-    .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId)))
-    .get();
+    .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId))))[0];
   if (!row) throw new PipelineRunNotFoundError(runId);
   const status = row.status as PipelineRunStatus;
 
@@ -1027,9 +1011,8 @@ export async function decidePipelineRun(
         leaseExpiresAt: null,
         finishedAt: Date.now(),
       })
-      .where(eq(pipelineRuns.id, runId))
-      .run();
-    const updated = (await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get())!;
+      .where(eq(pipelineRuns.id, runId));
+    const updated = ((await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)))[0])!;
     return { run: rowToRun(updated) };
   }
 

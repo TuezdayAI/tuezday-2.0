@@ -233,7 +233,7 @@ describe("brand profile API", () => {
   }
 
   it("GET returns status none before any run", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({ "/": HOME_HTML }) });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({ "/": HOME_HTML }) });
     const ws = await createWorkspace(false);
     const res = await app.inject({ method: "GET", url: `/workspaces/${ws.id}/brand-profile` });
     expect(res.statusCode).toBe(200);
@@ -242,7 +242,7 @@ describe("brand profile API", () => {
 
   it("refresh runs inline to ready and GET returns the profile", async () => {
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: markerLlm(0).llm,
       safeFetch: siteFetcher({ "/": HOME_HTML, "/about": ABOUT_HTML, "/pricing": PRICING_HTML }),
     });
@@ -262,7 +262,7 @@ describe("brand profile API", () => {
 
   it("workspace creation with a websiteUrl triggers the run in the background", async () => {
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: markerLlm(0).llm,
       safeFetch: siteFetcher({ "/": HOME_HTML }),
     });
@@ -281,7 +281,7 @@ describe("brand profile API", () => {
   });
 
   it("refresh without a websiteUrl → 400", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({}) });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({}) });
     const ws = await createWorkspace(false);
     const res = await app.inject({
       method: "POST",
@@ -292,7 +292,7 @@ describe("brand profile API", () => {
   });
 
   it("a failing scrape records status failed with the error", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: failingFetcher() });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: markerLlm(0).llm, safeFetch: failingFetcher() });
     const ws = await createWorkspace();
     const run = await app.inject({
       method: "POST",
@@ -306,7 +306,7 @@ describe("brand profile API", () => {
   });
 
   it("a gateway failure records status failed", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: throwingLlm(), safeFetch: siteFetcher({ "/": HOME_HTML }) });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: throwingLlm(), safeFetch: siteFetcher({ "/": HOME_HTML }) });
     const ws = await createWorkspace();
     const run = await app.inject({
       method: "POST",
@@ -318,7 +318,7 @@ describe("brand profile API", () => {
 
   it("PATCH edits fields once ready; 409 while not ready", async () => {
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: markerLlm(0).llm,
       safeFetch: siteFetcher({ "/": HOME_HTML }),
     });
@@ -339,7 +339,7 @@ describe("brand profile API", () => {
   });
 
   it("PATCH before any run → 409", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({}) });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({}) });
     const ws = await createWorkspace(false);
     const res = await app.inject({
       method: "PATCH",
@@ -351,7 +351,7 @@ describe("brand profile API", () => {
 
   it("PATCH with an invalid field → 400", async () => {
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: markerLlm(0).llm,
       safeFetch: siteFetcher({ "/": HOME_HTML }),
     });

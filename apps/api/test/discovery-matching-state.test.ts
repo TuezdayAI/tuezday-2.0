@@ -37,8 +37,7 @@ async function seedItem(
       createdAt: 1,
       updatedAt: 1,
     })
-    .onConflictDoNothing()
-    .run();
+    .onConflictDoNothing();
   await db.insert(discoverySources)
     .values({
       id: sourceId,
@@ -57,8 +56,7 @@ async function seedItem(
       executionVersion: 1,
       createdAt: 1,
     })
-    .onConflictDoNothing()
-    .run();
+    .onConflictDoNothing();
   const id = input.id ?? "33333333-3333-4333-8333-333333333333";
   await db.insert(discoveredItems)
     .values({
@@ -88,8 +86,7 @@ async function seedItem(
       matchingHeartbeatAt: null,
       matchingError: null,
       createdAt: 1,
-    })
-    .run();
+    });
   return { workspaceId, sourceId, itemId: id };
 }
 
@@ -114,7 +111,7 @@ function deferred<T>() {
 
 describe("discovery matching state", () => {
   it("reclaims expired work with a higher version and rejects the old heartbeat", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId } = await seedItem(db);
     const [first] = await claimMatchingBatch(db, {
       workspaceId,
@@ -125,8 +122,7 @@ describe("discovery matching state", () => {
     expect(first).toBeDefined();
     await db.update(discoveredItems)
       .set({ matchingLeaseExpiresAt: 0 })
-      .where(eq(discoveredItems.id, first!.itemId))
-      .run();
+      .where(eq(discoveredItems.id, first!.itemId));
     const [second] = await claimMatchingBatch(db, {
       workspaceId,
       owner: "owner-b",
@@ -142,29 +138,28 @@ describe("discovery matching state", () => {
   it.each(["pending", "running", "retryable_error"] as const)(
     "blocks acceptance while matching is %s",
     async (state) => {
-      const db = createTestDb();
+      const db = await createTestDb();
       const { workspaceId, itemId } = await seedItem(db, { state });
 
       expect(async () =>
         await acceptDiscoveredItem(db, workspaceId, itemId),
       ).toThrow("matching_not_ready");
-      expect(await db.select().from(signals).all()).toHaveLength(0);
+      expect(await db.select().from(signals)).toHaveLength(0);
     },
   );
 
   it("accepts a ready zero-match item and freezes matching", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, itemId } = await seedItem(db, { state: "ready" });
 
     const accepted = await acceptDiscoveredItem(db, workspaceId, itemId);
 
     expect(accepted.item.status).toBe("accepted");
     expect(
-      await db
+      (await db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, itemId))
-        .get(),
+        .where(eq(discoveredItems.id, itemId)))[0],
     ).toMatchObject({
       matchingState: "frozen",
       matchingLeaseOwner: null,
@@ -174,7 +169,7 @@ describe("discovery matching state", () => {
   });
 
   it("keeps matching lease internals out of the founder-visible item", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, itemId } = await seedItem(db, { state: "ready" });
 
     const item = (await getDiscoveredItem(db, workspaceId, itemId))!;
@@ -195,23 +190,22 @@ describe("discovery matching state", () => {
   });
 
   it("freezes matching when an item is skipped", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, itemId } = await seedItem(db, { state: "ready" });
     const item = (await getDiscoveredItem(db, workspaceId, itemId))!;
 
     await skipDiscoveredItem(db, workspaceId, item);
 
     expect(
-      (await db
+      ((await db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, itemId))
-        .get())!.matchingState,
+        .where(eq(discoveredItems.id, itemId)))[0])!.matchingState,
     ).toBe("frozen");
   });
 
   it("marks malformed model output retryable instead of ready", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, itemId } = await seedItem(db);
     const claims = await claimMatchingBatch(db, {
       workspaceId,
@@ -242,11 +236,10 @@ describe("discovery matching state", () => {
 
     expect(result).toEqual({ ready: 0, retryableErrors: 1 });
     expect(
-      await db
+      (await db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, itemId))
-        .get(),
+        .where(eq(discoveredItems.id, itemId)))[0],
     ).toMatchObject({
       matchingState: "retryable_error",
       matchingError: "matching_malformed_response",
@@ -254,7 +247,7 @@ describe("discovery matching state", () => {
   });
 
   it("does not let a delayed scorer overwrite a triaged item", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, itemId } = await seedItem(db);
     const claims = await claimMatchingBatch(db, {
       workspaceId,
@@ -289,17 +282,15 @@ describe("discovery matching state", () => {
         matchingLeaseExpiresAt: null,
         matchingHeartbeatAt: null,
       })
-      .where(eq(discoveredItems.id, itemId))
-      .run();
+      .where(eq(discoveredItems.id, itemId));
     release.resolve();
     await run;
 
     expect(
-      await db
+      (await db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, itemId))
-        .get(),
+        .where(eq(discoveredItems.id, itemId)))[0],
     ).toMatchObject({
       status: "accepted",
       matchingState: "frozen",
@@ -308,7 +299,7 @@ describe("discovery matching state", () => {
   });
 
   it("passes cancellation to the gateway and records a stable timeout", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { workspaceId, itemId } = await seedItem(db);
     const claims = await claimMatchingBatch(db, {
       workspaceId,
@@ -351,11 +342,10 @@ describe("discovery matching state", () => {
 
     expect(gatewaySignal?.aborted).toBe(true);
     expect(
-      (await db
+      ((await db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, itemId))
-        .get())!.matchingError,
+        .where(eq(discoveredItems.id, itemId)))[0])!.matchingError,
     ).toBe("matching_timeout");
   });
 });

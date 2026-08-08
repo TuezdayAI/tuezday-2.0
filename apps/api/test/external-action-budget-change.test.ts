@@ -124,7 +124,7 @@ describe("governed Meta budget changes", () => {
   let launchId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     state = graphState();
     app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     workspaceId = (await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Budget" } })).json().id;
@@ -226,7 +226,7 @@ describe("governed Meta budget changes", () => {
       status: "authorization_required",
       authorizedAt: null,
     });
-    const row = (await db.select().from(externalActions).where(eq(externalActions.id, proposed.json().action.id)).get())!;
+    const row = ((await db.select().from(externalActions).where(eq(externalActions.id, proposed.json().action.id)))[0])!;
     expect(JSON.parse(row.payloadJson)).toMatchObject({
       beforeDailyBudgetCents: 500,
       afterDailyBudgetCents: 750,

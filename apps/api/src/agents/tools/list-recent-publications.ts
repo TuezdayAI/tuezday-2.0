@@ -28,8 +28,7 @@ export const listRecentPublicationsTool: Tool<Input, unknown> = {
           (await ctx.db
             .select({ id: drafts.id })
             .from(drafts)
-            .where(and(eq(drafts.workspaceId, ctx.workspaceId), eq(drafts.campaignId, campaignId)))
-            .all())
+            .where(and(eq(drafts.workspaceId, ctx.workspaceId), eq(drafts.campaignId, campaignId))))
             .map((row) => row.id),
         )
       : null;

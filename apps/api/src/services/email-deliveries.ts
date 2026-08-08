@@ -26,7 +26,7 @@ const EVENT_STATUS: Record<string, EmailDeliveryStatus | undefined> = {
 };
 
 export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): Promise<RecordedEmailEvent> {
-  const duplicate = await db
+  const duplicate = (await db
     .select({ id: emailDeliveryEvents.id })
     .from(emailDeliveryEvents)
     .where(
@@ -34,11 +34,10 @@ export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent
         eq(emailDeliveryEvents.provider, "resend"),
         eq(emailDeliveryEvents.providerEventId, event.providerEventId),
       ),
-    )
-    .get();
+    ))[0];
   if (duplicate) return { duplicate: true, deliveryFound: true };
 
-  const delivery = await db
+  const delivery = (await db
     .select()
     .from(emailDeliveries)
     .where(
@@ -46,8 +45,7 @@ export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent
         eq(emailDeliveries.provider, "resend"),
         eq(emailDeliveries.providerMessageId, event.providerMessageId),
       ),
-    )
-    .get();
+    ))[0];
   if (!delivery) return { duplicate: false, deliveryFound: false };
 
   await db.transaction(async (tx) => {
@@ -62,8 +60,7 @@ export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent
         payloadJson: JSON.stringify(event.payload),
         occurredAt: event.occurredAt,
         createdAt: Date.now(),
-      })
-      .run();
+      });
 
     const nextStatus = EVENT_STATUS[event.eventType];
     const currentStatus = delivery.status as EmailDeliveryStatus;
@@ -77,8 +74,7 @@ export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent
           lastError: nextStatus === "failed" ? "Resend reported delivery failure" : null,
           updatedAt: Date.now(),
         })
-        .where(eq(emailDeliveries.id, delivery.id))
-        .run();
+        .where(eq(emailDeliveries.id, delivery.id));
     }
 
     if (event.eventType === "email.bounced" || event.eventType === "email.complained") {
@@ -92,8 +88,7 @@ export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent
         })
         .onConflictDoNothing({
           target: [emailSuppressions.workspaceId, emailSuppressions.normalizedEmail],
-        })
-        .run();
+        });
     }
   });
   return { duplicate: false, deliveryFound: true };

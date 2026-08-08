@@ -12,14 +12,14 @@ function recording() {
 
 describe("track()", () => {
   it("captures workspace-scoped events when opted in", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const ws = await createWorkspace(db, { name: "Acme" });
     const { sink, calls } = recording();
     await track(db, sink, { event: "generation.created", distinctId: "u1", workspaceId: ws.id });
     expect(calls).toHaveLength(1);
   });
   it("drops workspace-scoped events when opted out", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const ws = await createWorkspace(db, { name: "Acme" });
     await setAnalyticsOptOut(db, ws.id, true);
     const { sink, calls } = recording();
@@ -27,13 +27,13 @@ describe("track()", () => {
     expect(calls).toHaveLength(0);
   });
   it("captures user-lifecycle events (no workspace) regardless", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { sink, calls } = recording();
     await track(db, sink, { event: "user.registered", distinctId: "u1" });
     expect(calls).toHaveLength(1);
   });
-  it("never throws if the sink throws", () => {
-    const db = createTestDb();
+  it("never throws if the sink throws", async () => {
+    const db = await createTestDb();
     const sink: AnalyticsSink = { capture: () => { throw new Error("boom"); } };
     expect(async () => await track(db, sink, { event: "draft.approved", distinctId: "u1" })).not.toThrow();
   });

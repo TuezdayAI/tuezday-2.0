@@ -124,14 +124,12 @@ export async function listOpportunities(
     .where(where)
     .orderBy(desc(campaignOpportunities.createdAt), asc(campaignOpportunities.id))
     .limit(limit)
-    .offset(offset)
-    .all();
+    .offset(offset);
   const total =
-    (await db
+    ((await db
       .select({ n: sql<number>`COUNT(*)` })
       .from(campaignOpportunities)
-      .where(where)
-      .get())?.n ?? 0;
+      .where(where))[0])?.n ?? 0;
   return { opportunities: rows.map(projectOpportunity), total };
 }
 
@@ -146,8 +144,7 @@ async function eventRows(db: DbExecutor, opportunityId: string): Promise<Opportu
       // disposition written in the same transaction.
       sql`${campaignOpportunityEvents.fromStatus} IS NOT NULL`,
       asc(campaignOpportunityEvents.id),
-    )
-    .all())
+    ))
     .map((row) =>
       opportunityEventSchema.parse({
         id: row.id,
@@ -165,20 +162,18 @@ export async function getOpportunityDetail(
   workspaceId: string,
   opportunityId: string,
 ): Promise<OpportunityDetail> {
-  const row = await joinedSelect(db)
+  const row = (await joinedSelect(db)
     .where(
       and(
         eq(campaignOpportunities.id, opportunityId),
         eq(campaignOpportunities.workspaceId, workspaceId),
       ),
-    )
-    .get();
+    ))[0];
   if (!row) throw new OpportunityNotFoundError();
-  const profileRow = await db
+  const profileRow = (await db
     .select()
     .from(campaignRoutingProfiles)
-    .where(eq(campaignRoutingProfiles.id, row.opportunity.routingProfileId))
-    .get();
+    .where(eq(campaignRoutingProfiles.id, row.opportunity.routingProfileId)))[0];
   if (!profileRow) throw new OpportunityNotFoundError();
   return {
     opportunity: projectOpportunity(row),
@@ -199,7 +194,7 @@ export async function decideOpportunity(
   input: { action: OpportunityDecisionAction; reason?: string; actorUserId: string | null },
 ): Promise<OpportunityDetail> {
   await db.transaction(async (tx) => {
-    const row = await tx
+    const row = (await tx
       .select()
       .from(campaignOpportunities)
       .where(
@@ -207,8 +202,7 @@ export async function decideOpportunity(
           eq(campaignOpportunities.id, opportunityId),
           eq(campaignOpportunities.workspaceId, workspaceId),
         ),
-      )
-      .get();
+      ))[0];
     if (!row) throw new OpportunityNotFoundError();
     const from = row.status as OpportunityStatus;
     const to = OPPORTUNITY_DECISION_TARGETS[input.action];
@@ -224,8 +218,7 @@ export async function decideOpportunity(
         decisionReason: input.reason ?? null,
         updatedAt: now,
       })
-      .where(eq(campaignOpportunities.id, opportunityId))
-      .run();
+      .where(eq(campaignOpportunities.id, opportunityId));
     await tx.insert(campaignOpportunityEvents)
       .values({
         id: randomUUID(),
@@ -236,8 +229,7 @@ export async function decideOpportunity(
         actorUserId: input.actorUserId,
         reason: input.reason ?? null,
         createdAt: now,
-      })
-      .run();
+      });
   });
   return await getOpportunityDetail(db, workspaceId, opportunityId);
 }

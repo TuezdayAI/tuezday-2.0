@@ -63,10 +63,9 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 });
   });
 
   it("returns all nine, in precedence order, for any bundle", async () => {
@@ -118,8 +117,7 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         content: "Short posts on X.",
         createdAt: 1,
         updatedAt: 2,
-      })
-      .run();
+      });
     const entry = await knob(resolve({}), db, "channel_guidance_workspace");
     // The gap between these two words is the whole deletion decision (D-71.5).
     expect(entry.state).toBe("configured");
@@ -173,8 +171,7 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         content: "# DESIGN.md",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     await db.insert(designOverlays)
       .values({
         id: randomUUID(),
@@ -186,8 +183,7 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         content: "Bigger type.",
         createdAt: 1,
         updatedAt: 3,
-      })
-      .run();
+      });
     const entry = await knob(resolve({}), db, "design_overlays");
     expect(entry.state).toBe("configured");
     expect(entry.detail).toContain("not this text");
@@ -202,10 +198,9 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         angleCount: 3,
         flagThreshold: 70,
         updatedAt: 5,
-      })
-      .run();
+      });
     expect((await readKnobConfiguration(db, WORKSPACE_ID)).generationSettings.count).toBe(0);
-    await db.update(generationSettings).set({ angleEnabled: 1, updatedAt: 6 }).run();
+    await db.update(generationSettings).set({ angleEnabled: 1, updatedAt: 6 });
     expect((await readKnobConfiguration(db, WORKSPACE_ID)).generationSettings).toEqual({
       count: 1,
       lastAt: 6,
@@ -230,15 +225,13 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
         provider: "google",
         durationMs: 10,
         createdAt,
-      })
-      .run();
+      });
   }
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 });
   });
 
   it("gives every knob a configured flag, an applied count, and a visible denominator", async () => {
@@ -269,8 +262,7 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
         reason: null,
         createdAt: 1,
         updatedAt: 2,
-      })
-      .run();
+      });
     const matrix = (await buildKnobUsageReport(db, WORKSPACE_ID)).knobs.find(
       (k) => k.key === "context_matrix",
     )!;
@@ -304,8 +296,7 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
         provider: "google",
         durationMs: 10,
         createdAt: 20,
-      })
-      .run();
+      });
     const report = await buildKnobUsageReport(db, WORKSPACE_ID);
     // Counting the unreadable row would silently halve every applied share.
     expect(report.sampledResolves).toBe(1);

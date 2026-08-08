@@ -18,14 +18,13 @@ import {
   type BackgroundJobPayload,
   type BackgroundJobStatus,
 } from "@tuezday/contracts";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   backgroundJobs,
   backgroundWorkspaceDispatch,
   type BackgroundJobRow,
 } from "../db/schema";
 import { databaseNowMs } from "./task-leases";
-
 const MAX_IDEMPOTENCY_KEY_CHARS = 300;
 const MAX_PAYLOAD_CHARS = 16_000;
 const MAX_RESULT_CHARS = 16_000;
@@ -163,7 +162,7 @@ export async function enqueueBackgroundJob(
   }
   const scopedActiveKey = activeKey(payload.workspaceId, idempotencyKey);
 
-  const inserted = await db
+  const inserted = (await db
     .insert(backgroundJobs)
     .values({
       id: randomUUID(),
@@ -189,15 +188,13 @@ export async function enqueueBackgroundJob(
       updatedAt: now,
     })
     .onConflictDoNothing({ target: backgroundJobs.activeKey })
-    .returning()
-    .get();
+    .returning())[0];
   if (inserted) return inserted;
 
-  const existing = await db
+  const existing = (await db
     .select()
     .from(backgroundJobs)
-    .where(eq(backgroundJobs.activeKey, scopedActiveKey))
-    .get();
+    .where(eq(backgroundJobs.activeKey, scopedActiveKey)))[0];
   if (!existing) throw new Error("background_job_enqueue_conflict_without_active_row");
   return existing;
 }
@@ -231,8 +228,7 @@ export async function claimBackgroundJobs(
           eq(backgroundJobs.status, "running"),
           gt(backgroundJobs.leaseExpiresAt, now),
         ),
-      )
-      .all();
+      );
     const liveCounts = new Map<string, number>();
     for (const row of liveRows) {
       liveCounts.set(row.workspaceId, (liveCounts.get(row.workspaceId) ?? 0) + 1);
@@ -259,16 +255,14 @@ export async function claimBackgroundJobs(
         asc(backgroundJobs.createdAt),
         asc(backgroundJobs.id),
       )
-      .limit(Math.min(MAX_CANDIDATE_SCAN, Math.max(100, input.limit * 25)))
-      .all();
+      .limit(Math.min(MAX_CANDIDATE_SCAN, Math.max(100, input.limit * 25)));
     if (candidates.length === 0) return [];
 
     const workspaceIds = [...new Set(candidates.map((row) => row.workspaceId))];
     const dispatchRows = await tx
       .select()
       .from(backgroundWorkspaceDispatch)
-      .where(inArray(backgroundWorkspaceDispatch.workspaceId, workspaceIds))
-      .all();
+      .where(inArray(backgroundWorkspaceDispatch.workspaceId, workspaceIds));
     const lastDispatched = new Map(
       dispatchRows.map((row) => [row.workspaceId, row.lastDispatchedAt]),
     );
@@ -312,7 +306,7 @@ export async function claimBackgroundJobs(
                   eq(backgroundJobs.status, "running"),
                   lte(backgroundJobs.leaseExpiresAt, now),
                 );
-          const row = await tx
+          const row = (await tx
             .update(backgroundJobs)
             .set({
               status: "running",
@@ -333,8 +327,7 @@ export async function claimBackgroundJobs(
                 availability,
               ),
             )
-            .returning()
-            .get();
+            .returning())[0];
           claimed = toClaim(row);
         }
         if (!claimed) continue;
@@ -348,8 +341,7 @@ export async function claimBackgroundJobs(
           .onConflictDoUpdate({
             target: backgroundWorkspaceDispatch.workspaceId,
             set: { lastDispatchedAt: now, updatedAt: now },
-          })
-          .run();
+          });
         lastDispatched.set(workspaceId, now);
         liveCounts.set(workspaceId, (liveCounts.get(workspaceId) ?? 0) + 1);
         claims.push(claimed);
@@ -379,7 +371,7 @@ export async function heartbeatBackgroundJob(
   integerInRange(leaseMs, "leaseMs", 1, 86_400_000);
   const now = await databaseNowMs(db);
   return toClaim(
-    await db
+    (await db
       .update(backgroundJobs)
       .set({
         leaseExpiresAt: now + leaseMs,
@@ -387,8 +379,7 @@ export async function heartbeatBackgroundJob(
         updatedAt: now,
       })
       .where(liveClaimWhere(claim, now))
-      .returning()
-      .get(),
+      .returning())[0],
   );
 }
 
@@ -411,9 +402,8 @@ export async function completeBackgroundJob(
       resultJson: boundedJson(result, MAX_RESULT_CHARS),
       updatedAt: now,
     })
-    .where(liveClaimWhere(claim, now))
-    .run();
-  return updated.changes === 1;
+    .where(liveClaimWhere(claim, now));
+  return rowsAffected(updated) === 1;
 }
 
 function deterministicBackoffMs(
@@ -439,7 +429,7 @@ export async function deadLetterBackgroundJob(
 ): Promise<BackgroundJobRow | null> {
   const now = await databaseNowMs(db);
   return (
-    await db
+    (await db
       .update(backgroundJobs)
       .set({
         status: "dead_letter",
@@ -452,8 +442,7 @@ export async function deadLetterBackgroundJob(
         updatedAt: now,
       })
       .where(liveClaimWhere(claim, now))
-      .returning()
-      .get() ?? null
+      .returning())[0] ?? null
   );
 }
 
@@ -488,7 +477,7 @@ export async function retryBackgroundJob(
     now + deterministicBackoffMs(claim, baseBackoffMs, maxBackoffMs);
   integerInRange(availableAt, "availableAt", now + 1, Number.MAX_SAFE_INTEGER);
   return (
-    await db
+    (await db
       .update(backgroundJobs)
       .set({
         status: "queued",
@@ -501,8 +490,7 @@ export async function retryBackgroundJob(
         updatedAt: now,
       })
       .where(liveClaimWhere(claim, now))
-      .returning()
-      .get() ?? null
+      .returning())[0] ?? null
   );
 }
 
@@ -511,7 +499,7 @@ export async function requeueDeadLetter(
   jobId: string,
   options: { availableAt?: number; maxAttempts?: number } = {},
 ): Promise<BackgroundJobRow | null> {
-  const dead = await db
+  const dead = (await db
     .select()
     .from(backgroundJobs)
     .where(
@@ -519,8 +507,7 @@ export async function requeueDeadLetter(
         eq(backgroundJobs.id, jobId),
         eq(backgroundJobs.status, "dead_letter"),
       ),
-    )
-    .get();
+    ))[0];
   if (!dead) return null;
   const parsed = backgroundJobPayloadSchema.parse(JSON.parse(dead.payloadJson));
   return await enqueueBackgroundJob(db, {
@@ -553,8 +540,7 @@ export async function listBackgroundJobs(
     .from(backgroundJobs)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(backgroundJobs.createdAt), desc(backgroundJobs.id))
-    .limit(limit)
-    .all();
+    .limit(limit);
 }
 
 export async function getBackgroundQueueStats(
@@ -568,7 +554,7 @@ export async function getBackgroundQueueStats(
     1,
     100,
   );
-  const aggregate = await db.get<{
+  const { rows: aggregateRows } = await db.execute<{
     total: number;
     queued: number;
     runnable: number;
@@ -596,7 +582,8 @@ export async function getBackgroundQueueStats(
       END) AS average_duration_ms
     FROM background_jobs
   `);
-  const saturation = await db.get<{ count: number }>(sql`
+  const aggregate = aggregateRows[0];
+  const { rows: saturationRows } = await db.execute<{ count: number }>(sql`
     SELECT COUNT(*) AS count
     FROM (
       SELECT workspace_id
@@ -606,14 +593,15 @@ export async function getBackgroundQueueStats(
       HAVING COUNT(*) >= ${perWorkspaceConcurrency}
     ) AS saturated
   `);
+  const saturation = saturationRows[0];
   const byKind = Object.fromEntries(
     BACKGROUND_JOB_KINDS.map((kind) => [kind, 0]),
   ) as Record<BackgroundJobKind, number>;
-  for (const row of await db.all<{ kind: string; count: number }>(sql`
+  for (const row of (await db.execute<{ kind: string; count: number }>(sql`
     SELECT kind, COUNT(*) AS count
     FROM background_jobs
     GROUP BY kind
-  `)) {
+  `)).rows) {
     if (BACKGROUND_JOB_KINDS.includes(row.kind as BackgroundJobKind)) {
       byKind[row.kind as BackgroundJobKind] = row.count;
     }

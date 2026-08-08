@@ -95,8 +95,7 @@ export async function listChatProposals(db: Db, sessionId: string): Promise<Chat
     .select()
     .from(chatProposals)
     .where(eq(chatProposals.sessionId, sessionId))
-    .orderBy(asc(chatProposals.createdAt))
-    .all())
+    .orderBy(asc(chatProposals.createdAt)))
     .map(rowToChatProposal);
 }
 
@@ -105,11 +104,10 @@ export async function getChatProposal(
   workspaceId: string,
   proposalId: string,
 ): Promise<ChatProposal | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(chatProposals)
-    .where(and(eq(chatProposals.workspaceId, workspaceId), eq(chatProposals.id, proposalId)))
-    .get();
+    .where(and(eq(chatProposals.workspaceId, workspaceId), eq(chatProposals.id, proposalId))))[0];
   return row ? rowToChatProposal(row) : undefined;
 }
 
@@ -118,8 +116,7 @@ export async function countChatProposalsForThread(db: Db, sessionId: string): Pr
   return (await db
     .select({ id: chatProposals.id })
     .from(chatProposals)
-    .where(eq(chatProposals.sessionId, sessionId))
-    .all()).length;
+    .where(eq(chatProposals.sessionId, sessionId))).length;
 }
 
 /** Chat proposals recorded workspace-wide in the trailing 24 hours. */
@@ -132,8 +129,7 @@ export async function countChatProposalsToday(db: Db, workspaceId: string, now =
         eq(chatProposals.workspaceId, workspaceId),
         gte(chatProposals.createdAt, now - DAY_MS),
       ),
-    )
-    .all()).length;
+    )).length;
 }
 
 /**
@@ -142,7 +138,7 @@ export async function countChatProposalsToday(db: Db, workspaceId: string, now =
  */
 export async function attachProposalsToMessage(db: Db, ids: string[], messageId: string): Promise<void> {
   for (const id of ids) {
-    await db.update(chatProposals).set({ messageId }).where(eq(chatProposals.id, id)).run();
+    await db.update(chatProposals).set({ messageId }).where(eq(chatProposals.id, id));
   }
 }
 
@@ -249,7 +245,7 @@ export function createChatProposalRecorder(
       resolvedAt: null,
       createdAt: now(),
     };
-    await db.insert(chatProposals).values(row).run();
+    await db.insert(chatProposals).values(row);
     const proposal = rowToChatProposal(row);
     ctx.onRecorded?.(proposal);
 
@@ -303,8 +299,8 @@ async function resolveRow(
   id: string,
   patch: Partial<ChatProposalRow>,
 ): Promise<ChatProposal | undefined> {
-  await db.update(chatProposals).set(patch).where(eq(chatProposals.id, id)).run();
-  const row = await db.select().from(chatProposals).where(eq(chatProposals.id, id)).get();
+  await db.update(chatProposals).set(patch).where(eq(chatProposals.id, id));
+  const row = (await db.select().from(chatProposals).where(eq(chatProposals.id, id)))[0];
   return row ? rowToChatProposal(row) : undefined;
 }
 
@@ -328,7 +324,7 @@ export async function confirmChatProposal(
     return { ok: false, error: "already_resolved", proposal: existing };
   }
 
-  const row = (await db.select().from(chatProposals).where(eq(chatProposals.id, proposalId)).get())!;
+  const row = ((await db.select().from(chatProposals).where(eq(chatProposals.id, proposalId)))[0])!;
   const parsed = toolInputSchemas[existing.tool].safeParse(parseArgs(row.argsJson));
   const at = Date.now();
 

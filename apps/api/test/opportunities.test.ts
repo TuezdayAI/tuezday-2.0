@@ -87,7 +87,7 @@ describe("opportunity routes (Sprint 61)", () => {
   let personaId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: routingLlm });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Opps" } })
@@ -145,11 +145,10 @@ describe("opportunity routes (Sprint 61)", () => {
         observedAt: Date.now(),
       });
     });
-    return (await db
+    return ((await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.title, title))
-      .get())!.id;
+      .where(eq(canonicalExternalStories.title, title)))[0])!.id;
   }
 
   async function runMatch() {

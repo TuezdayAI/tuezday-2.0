@@ -49,7 +49,7 @@ describe("ad creatives API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: fakeGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Ads" } })
     ).json().id;

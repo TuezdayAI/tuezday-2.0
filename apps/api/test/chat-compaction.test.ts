@@ -41,9 +41,9 @@ function summaryStep(summary: string, pinned: string[] = [], open: string[] = []
 }
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   workspaceId = randomUUID();
-  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 });
 });
 
 describe("the threshold", () => {
@@ -93,7 +93,7 @@ describe("folding", () => {
     const result = await maybeCompact(db, llm, session, messages);
 
     expect(result!.agentRunId).toBeTruthy();
-    const run = (await db.select().from(agentRuns).all()).find((r) => r.id === result!.agentRunId);
+    const run = (await db.select().from(agentRuns)).find((r) => r.id === result!.agentRunId);
     expect(run?.task).toBe("chat:compaction");
     expect(result!.usage.inputTokens).toBeGreaterThan(0);
   });

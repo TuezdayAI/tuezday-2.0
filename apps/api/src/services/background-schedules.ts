@@ -20,11 +20,11 @@ export async function reconcileBackgroundSchedules(
   // The clock default is resolved here rather than in the parameter list: it is
   // a database round-trip, and `await` is illegal in a default initializer.
   const now = nowArg ?? (await databaseNowMs(db));
-  const workspaceRows = await db.select({ id: workspaces.id }).from(workspaces).all();
+  const workspaceRows = await db.select({ id: workspaces.id }).from(workspaces);
   let created = 0;
   for (const workspace of workspaceRows) {
     for (const kind of BACKGROUND_RECURRING_JOB_KINDS) {
-      const inserted = await db
+      const inserted = (await db
         .insert(backgroundSchedules)
         .values({
           id: randomUUID(),
@@ -40,8 +40,7 @@ export async function reconcileBackgroundSchedules(
         .onConflictDoNothing({
           target: [backgroundSchedules.workspaceId, backgroundSchedules.kind],
         })
-        .returning({ id: backgroundSchedules.id })
-        .get();
+        .returning({ id: backgroundSchedules.id }))[0];
       if (inserted) {
         created += 1;
         continue;
@@ -57,8 +56,7 @@ export async function reconcileBackgroundSchedules(
             eq(backgroundSchedules.workspaceId, workspace.id),
             eq(backgroundSchedules.kind, kind),
           ),
-        )
-        .run();
+        );
     }
   }
   return created;
@@ -85,8 +83,7 @@ export async function admitDueBackgroundSchedules(
       ),
     )
     .orderBy(asc(backgroundSchedules.nextRunAt), asc(backgroundSchedules.id))
-    .limit(MAX_SCHEDULES_PER_ADMISSION)
-    .all();
+    .limit(MAX_SCHEDULES_PER_ADMISSION);
   let admitted = 0;
 
   for (const candidate of due) {
@@ -97,13 +94,12 @@ export async function admitDueBackgroundSchedules(
     ) {
       await db.update(backgroundSchedules)
         .set({ enabled: false, updatedAt: now })
-        .where(eq(backgroundSchedules.id, candidate.id))
-        .run();
+        .where(eq(backgroundSchedules.id, candidate.id));
       continue;
     }
     const kind = candidate.kind as BackgroundRecurringJobKind;
     const didAdmit = await db.transaction(async (tx) => {
-      const advanced = await tx
+      const advanced = (await tx
         .update(backgroundSchedules)
         .set({
           nextRunAt: nextBoundary(candidate.nextRunAt, candidate.intervalMs, now),
@@ -117,8 +113,7 @@ export async function admitDueBackgroundSchedules(
             eq(backgroundSchedules.nextRunAt, candidate.nextRunAt),
           ),
         )
-        .returning({ id: backgroundSchedules.id })
-        .get();
+        .returning({ id: backgroundSchedules.id }))[0];
       if (!advanced) return false;
       await enqueueBackgroundJob(tx, {
         payload: { kind, workspaceId: candidate.workspaceId },

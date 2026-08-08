@@ -58,7 +58,7 @@ describe("POST /workspaces/:id/brain/auto-draft (route)", () => {
   });
 
   it("drafts all five docs for a ready profile and returns accounting + brain", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     app = await buildAuthedApp({ db, llm: echoLlm, connectors: emptyFabric });
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
@@ -75,8 +75,7 @@ describe("POST /workspaces/:id/brain/auto-draft (route)", () => {
         corpusChars: 1000,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     const res = await app.inject({
       method: "POST",
@@ -94,7 +93,7 @@ describe("POST /workspaces/:id/brain/auto-draft (route)", () => {
   });
 
   it("returns insufficient without touching docs when there is nothing to draft from", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     app = await buildAuthedApp({ db, llm: echoLlm, connectors: emptyFabric });
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })

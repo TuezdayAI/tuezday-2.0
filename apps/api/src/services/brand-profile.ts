@@ -82,16 +82,14 @@ async function upsertRow(
   values: Partial<typeof brandProfiles.$inferInsert> & { sourceUrl?: string },
 ): Promise<void> {
   const now = Date.now();
-  const existing = await db
+  const existing = (await db
     .select({ id: brandProfiles.id })
     .from(brandProfiles)
-    .where(eq(brandProfiles.workspaceId, workspaceId))
-    .get();
+    .where(eq(brandProfiles.workspaceId, workspaceId)))[0];
   if (existing) {
     await db.update(brandProfiles)
       .set({ ...values, updatedAt: now })
-      .where(eq(brandProfiles.id, existing.id))
-      .run();
+      .where(eq(brandProfiles.id, existing.id));
   } else {
     await db.insert(brandProfiles)
       .values({
@@ -104,17 +102,15 @@ async function upsertRow(
         corpusChars: values.corpusChars ?? 0,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
   }
 }
 
 export async function getBrandProfileView(db: Db, workspaceId: string): Promise<BrandProfileView> {
-  const row = await db
+  const row = (await db
     .select()
     .from(brandProfiles)
-    .where(eq(brandProfiles.workspaceId, workspaceId))
-    .get();
+    .where(eq(brandProfiles.workspaceId, workspaceId)))[0];
   if (!row) return { status: "none", profile: null, sourceUrl: null, error: null, updatedAt: null };
   return {
     status: row.status as BrandProfileStatus,
@@ -176,11 +172,10 @@ export async function updateBrandProfile(
   workspaceId: string,
   input: UpdateBrandProfileInput,
 ): Promise<UpdateBrandProfileResult> {
-  const row = await db
+  const row = (await db
     .select()
     .from(brandProfiles)
-    .where(eq(brandProfiles.workspaceId, workspaceId))
-    .get();
+    .where(eq(brandProfiles.workspaceId, workspaceId)))[0];
   if (!row || row.status !== "ready" || !row.profileJson) {
     return { ok: false, reason: "not_ready" };
   }

@@ -113,7 +113,7 @@ export async function getAuthorizationBatchDetail(
   workspaceId: string,
   batchId: string,
 ): Promise<AuthorizationBatchDetail | undefined> {
-  const batchRow = await db
+  const batchRow = (await db
     .select()
     .from(externalActionBatches)
     .where(
@@ -121,8 +121,7 @@ export async function getAuthorizationBatchDetail(
         eq(externalActionBatches.workspaceId, workspaceId),
         eq(externalActionBatches.id, batchId),
       ),
-    )
-    .get();
+    ))[0];
   if (!batchRow) return undefined;
   const rows = (await db
     .select()
@@ -132,8 +131,7 @@ export async function getAuthorizationBatchDetail(
         eq(externalActionBatchItems.workspaceId, workspaceId),
         eq(externalActionBatchItems.batchId, batchId),
       ),
-    )
-    .all())
+    ))
     .sort((left, right) => storedSnapshot(left).position - storedSnapshot(right).position);
   const items = rows.map(rowToItem);
   return {
@@ -147,11 +145,10 @@ export async function getAuthorizationBatchDetail(
 }
 
 async function actionById(db: Db, actionId: string): Promise<ExternalAction | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(externalActions)
-    .where(eq(externalActions.id, actionId))
-    .get();
+    .where(eq(externalActions.id, actionId)))[0];
   return row ? rowToExternalAction(row) : undefined;
 }
 
@@ -205,8 +202,7 @@ async function campaignActions(
         eq(externalActions.campaignId, campaignId),
         eq(externalActions.status, "authorization_required"),
       ),
-    )
-    .all())
+    ))
     .map(rowToExternalAction)
     .filter((action) => !allowedKinds || allowedKinds.has(action.kind))
     .sort(compareCampaignActions);
@@ -222,7 +218,7 @@ export async function createAuthorizationBatchPreview(
   input: CreateAuthorizationBatchInput,
   actor: ExternalActionRuntimeActor,
 ): Promise<AuthorizationBatchDetail> {
-  const existing = await db
+  const existing = (await db
     .select({ id: externalActionBatches.id })
     .from(externalActionBatches)
     .where(
@@ -230,8 +226,7 @@ export async function createAuthorizationBatchPreview(
         eq(externalActionBatches.workspaceId, workspaceId),
         eq(externalActionBatches.requestId, input.requestId),
       ),
-    )
-    .get();
+    ))[0];
   if (existing) return (await getAuthorizationBatchDetail(db, workspaceId, existing.id))!;
 
   // Bound to a local first: narrowing a property access does not survive into
@@ -276,8 +271,7 @@ export async function createAuthorizationBatchPreview(
         createdAt: now,
         confirmedAt: null,
         completedAt: null,
-      })
-      .run();
+      });
     if (selected.entries.length > 0) {
       await tx.insert(externalActionBatchItems)
         .values(
@@ -301,8 +295,7 @@ export async function createAuthorizationBatchPreview(
             error: null,
             processedAt: null,
           })),
-        )
-        .run();
+        );
     }
   });
   return (await getAuthorizationBatchDetail(db, workspaceId, batchId))!;
@@ -346,8 +339,7 @@ export async function runAuthorizationBatch(
   const confirmedAt = initial.batch.confirmedAt ?? Date.now();
   await db.update(externalActionBatches)
     .set({ status: "running", confirmedAt, completedAt: null })
-    .where(eq(externalActionBatches.id, batchId))
-    .run();
+    .where(eq(externalActionBatches.id, batchId));
 
   for (const item of initial.items) {
     if (!item.eligible || item.status !== "pending") continue;
@@ -364,8 +356,7 @@ export async function runAuthorizationBatch(
           error: null,
           processedAt: Date.now(),
         })
-        .where(eq(externalActionBatchItems.id, item.id))
-        .run();
+        .where(eq(externalActionBatchItems.id, item.id));
     } catch (error) {
       if (error instanceof StaleExternalActionError) {
         await db.update(externalActionBatchItems)
@@ -378,8 +369,7 @@ export async function runAuthorizationBatch(
             error: error.message,
             processedAt: Date.now(),
           })
-          .where(eq(externalActionBatchItems.id, item.id))
-          .run();
+          .where(eq(externalActionBatchItems.id, item.id));
         continue;
       }
       await db.update(externalActionBatchItems)
@@ -389,15 +379,13 @@ export async function runAuthorizationBatch(
           error: error instanceof Error ? error.message.slice(0, 1_000) : "Authorization failed",
           processedAt: Date.now(),
         })
-        .where(eq(externalActionBatchItems.id, item.id))
-        .run();
+        .where(eq(externalActionBatchItems.id, item.id));
     }
   }
 
   const processed = (await getAuthorizationBatchDetail(db, workspaceId, batchId))!;
   await db.update(externalActionBatches)
     .set({ status: batchOutcome(processed.items), completedAt: Date.now() })
-    .where(eq(externalActionBatches.id, batchId))
-    .run();
+    .where(eq(externalActionBatches.id, batchId));
   return (await getAuthorizationBatchDetail(db, workspaceId, batchId))!;
 }

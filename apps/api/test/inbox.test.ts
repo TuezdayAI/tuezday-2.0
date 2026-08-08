@@ -129,7 +129,7 @@ describe("engagement & reply inbox", () => {
     vi.stubEnv("REDDIT_CLIENT_SECRET", "csecret");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(MONDAY_8AM_UTC);
-    db = createTestDb();
+    db = await createTestDb();
     state = fabricState();
     app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     workspaceId = (
@@ -349,8 +349,7 @@ describe("engagement & reply inbox", () => {
     const facts = await db
       .select()
       .from(metricsTable)
-      .where(eq(metricsTable.subjectId, pub.id))
-      .all();
+      .where(eq(metricsTable.subjectId, pub.id));
     expect(facts.map((f) => f.metricKey).sort()).toEqual(["comments", "likes"]);
     for (const f of facts) {
       expect(f).toMatchObject({ subjectType: "publication", window: "24h", source: "captured" });

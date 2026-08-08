@@ -19,7 +19,7 @@ describe("transactional mail", () => {
   let workspaceId: string;
 
   async function build(mailer: Mailer): Promise<void> {
-    app = await buildAuthedApp({ db: createTestDb(), mailer });
+    app = await buildAuthedApp({ db: await createTestDb(), mailer });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Mailers" } })
     ).json().id;

@@ -11,7 +11,7 @@ describe("resolve API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     const res = await app.inject({
       method: "POST",

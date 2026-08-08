@@ -416,8 +416,7 @@ export function registerPrRoutes(
               eq(emailDeliveries.workspaceId, request.params.id),
               eq(emailDeliveries.origin, "pr_draft"),
             ),
-          )
-          .all())
+          ))
           .map((delivery) => delivery.originId),
       );
       const rows = await db
@@ -429,8 +428,7 @@ export function registerPrRoutes(
             eq(drafts.state, state),
             isNotNull(drafts.mediaContactId),
           ),
-        )
-        .all();
+        );
 
       const lines = ["name,email,type,outlet,beat,content"];
       for (const row of rows) {

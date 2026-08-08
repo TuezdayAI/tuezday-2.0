@@ -5,20 +5,18 @@ import {
   claimTaskLease,
   databaseNowMs,
   heartbeatTaskLease,
+  DATABASE_NOW_MS,
   releaseTaskLease,
   withTaskLease,
 } from "../src/services/task-leases";
 import { createTestDb } from "./helpers";
 
-async function expireLease(db: ReturnType<typeof createTestDb>, key: string): Promise<void> {
+async function expireLease(db: Awaited<ReturnType<typeof createTestDb>>, key: string): Promise<void> {
   await db.update(taskLeases)
     .set({
-      expiresAt: sql`
-        CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) - 1
-      `,
+      expiresAt: sql`${DATABASE_NOW_MS} - 1`,
     })
-    .where(sql`${taskLeases.key} = ${key}`)
-    .run();
+    .where(sql`${taskLeases.key} = ${key}`);
 }
 
 describe("database-clock task leases", () => {
@@ -27,7 +25,7 @@ describe("database-clock task leases", () => {
   });
 
   it("claims, renews, releases, and reclaims with monotonic fencing versions", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const before = Date.now();
     expect(await databaseNowMs(db)).toBeGreaterThanOrEqual(before - 1_000);
 
@@ -58,7 +56,7 @@ describe("database-clock task leases", () => {
   });
 
   it("returns busy without invoking work when another owner is live", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await claimTaskLease(db, "automation:scheduler", "owner-a", 45_000);
     const work = vi.fn(async () => "unexpected");
 
@@ -79,7 +77,7 @@ describe("database-clock task leases", () => {
 
   it("aborts in-flight work when a heartbeat loses its owner fence", async () => {
     vi.useFakeTimers();
-    const db = createTestDb();
+    const db = await createTestDb();
     let signalSeen: AbortSignal | undefined;
 
     const resultPromise = await withTaskLease(
@@ -102,8 +100,7 @@ describe("database-clock task leases", () => {
     await vi.waitFor(() => expect(signalSeen).toBeDefined());
     await db.update(taskLeases)
       .set({ owner: "owner-b" })
-      .where(sql`${taskLeases.key} = ${"automation:workspace-1"}`)
-      .run();
+      .where(sql`${taskLeases.key} = ${"automation:workspace-1"}`);
 
     await vi.advanceTimersByTimeAsync(10);
     await expect(resultPromise).resolves.toEqual({ busy: false, value: true });

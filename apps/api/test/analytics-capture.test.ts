@@ -10,15 +10,15 @@ const fakeLlm: LlmGateway = {
   },
 };
 
-function setup() {
+async function setup() {
   const captured: AnalyticsEventInput[] = [];
   const analytics: AnalyticsSink = { capture: (i) => captured.push(i) };
-  return { db: createTestDb(), analytics, captured };
+  return { db: await createTestDb(), analytics, captured };
 }
 
 describe("analytics funnel capture", () => {
   it("captures user.registered on POST /auth/register", async () => {
-    const { db, analytics, captured } = setup();
+    const { db, analytics, captured } = await setup();
     const app = await buildApp({ db, llm: fakeLlm, analytics });
     await registerUser(app);
     const ev = captured.find((c) => c.event === "user.registered");
@@ -28,7 +28,7 @@ describe("analytics funnel capture", () => {
   });
 
   it("captures generation.created on a successful generate", async () => {
-    const { db, analytics, captured } = setup();
+    const { db, analytics, captured } = await setup();
     const app = await buildApp({ db, llm: fakeLlm, analytics });
     const user = await registerUser(app);
     const authed = asUser(app, user.token);
@@ -46,7 +46,7 @@ describe("analytics funnel capture", () => {
   });
 
   it("respects the workspace opt-out", async () => {
-    const { db, analytics, captured } = setup();
+    const { db, analytics, captured } = await setup();
     const app = await buildApp({ db, llm: fakeLlm, analytics });
     const user = await registerUser(app);
     const authed = asUser(app, user.token);

@@ -46,8 +46,7 @@ async function sentThreadDeliveries(db: Db, workspaceId: string): Promise<Map<st
         eq(emailDeliveries.provider, "gmail"),
         isNotNull(emailDeliveries.providerThreadId),
       ),
-    )
-    .all();
+    );
   const byThread = new Map<string, { id: string; providerMessageId: string | null }>();
   for (const row of rows) {
     if (row.providerThreadId) {
@@ -114,8 +113,7 @@ async function classifyNewItems(
             replyLabeledAt: nowMs,
             updatedAt: nowMs,
           })
-          .where(eq(inboxItems.id, item.id))
-          .run();
+          .where(eq(inboxItems.id, item.id));
         labeled += 1;
       }
     } catch {
@@ -185,7 +183,7 @@ export async function runMailboxInbox(
         });
         if (inserted) {
           newItems += 1;
-          const row = await db
+          const row = (await db
             .select({ id: inboxItems.id })
             .from(inboxItems)
             .where(
@@ -193,8 +191,7 @@ export async function runMailboxInbox(
                 eq(inboxItems.connectionId, mailbox.connectionId),
                 eq(inboxItems.externalId, message.id),
               ),
-            )
-            .get();
+            ))[0];
           if (row) {
             created.push({
               id: row.id,
@@ -207,8 +204,7 @@ export async function runMailboxInbox(
       }
       await db.update(mailboxes)
         .set({ lastPolledAt: nowMs, lastError: null, updatedAt: nowMs })
-        .where(eq(mailboxes.id, mailbox.id))
-        .run();
+        .where(eq(mailboxes.id, mailbox.id));
     } catch (err) {
       // A failing mailbox never aborts the run; the cursor stays put so the
       // next poll retries the same window.
@@ -217,8 +213,7 @@ export async function runMailboxInbox(
           lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500),
           updatedAt: nowMs,
         })
-        .where(eq(mailboxes.id, mailbox.id))
-        .run();
+        .where(eq(mailboxes.id, mailbox.id));
     }
   }
 

@@ -19,7 +19,7 @@ import { addMember } from "../src/services/teams";
 
 describe("entitlements service", () => {
   test("a workspace with no subscription resolves to free", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user } = await registerAccount(db, { email: "founder@example.com", password: "password123", name: "Founder" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
@@ -28,7 +28,7 @@ describe("entitlements service", () => {
   });
 
   test("getUsage counts seats, connectors, and rolling LLM spend from the ledger", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user: u1 } = await registerAccount(db, { email: "u1@test.com", password: "pwd", name: "u1" });
     const { user: u2 } = await registerAccount(db, { email: "u2@test.com", password: "pwd", name: "u2" });
     const ws = await createWorkspace(db, { name: "Test WS" }, u1.id);
@@ -44,7 +44,7 @@ describe("entitlements service", () => {
       status: "connected",
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
 
     await recordLlmUsage(db, {
       workspaceId: ws.id,
@@ -70,7 +70,7 @@ describe("entitlements service", () => {
   });
 
   test("assertLlmBudget throws at the cap; llmBudgetExhausted mirrors it", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user } = await registerAccount(db, { email: "budget@test.com", password: "pwd", name: "u" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
@@ -95,7 +95,7 @@ describe("entitlements service", () => {
   });
 
   test("assertWithinLimit throws EntitlementError at the cap, passes under it", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user } = await registerAccount(db, { email: "u3@test.com", password: "pwd", name: "u" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
@@ -107,7 +107,7 @@ describe("entitlements service", () => {
   });
 
   test("unlimited (-1) never throws", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user } = await registerAccount(db, { email: "u4@test.com", password: "pwd", name: "u" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
@@ -118,14 +118,14 @@ describe("entitlements service", () => {
       status: "active",
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
 
     // Scale plan has unlimited seats (-1)
     await assertWithinLimit(db, ws.id, "seats", 9999);
   });
 
   test("BILLING_ENFORCED=false disables throwing", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user } = await registerAccount(db, { email: "u5@test.com", password: "pwd", name: "u" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 

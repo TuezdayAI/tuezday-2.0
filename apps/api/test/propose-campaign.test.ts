@@ -57,9 +57,9 @@ const runId = "99999999-9999-4999-8999-999999999999";
 const origin = () => ({ agentRunId: runId, workspaceId });
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   workspaceId = randomUUID();
-  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 });
   await ensureWorkspaceActionPolicies(db, workspaceId);
   live = createAgentProposals({
     db,
@@ -104,14 +104,14 @@ describe("the live implementation", () => {
 
   it("forces draft status even when the row it wrote is inspected directly", async () => {
     await live.proposeCampaign(origin(), { name: "Q4", rationale: "r" });
-    const row = await db.select().from(campaigns).where(eq(campaigns.workspaceId, workspaceId)).get();
+    const row = (await db.select().from(campaigns).where(eq(campaigns.workspaceId, workspaceId)))[0];
     expect(row?.status).toBe("draft");
     expect(row?.origin).toBe("system");
   });
 
   it("records a ledger row pointing at the campaign", async () => {
     const result = await live.proposeCampaign(origin(), { name: "Q4", rationale: "why" });
-    const row = await db.select().from(agentProposals).where(eq(agentProposals.agentRunId, runId)).get();
+    const row = (await db.select().from(agentProposals).where(eq(agentProposals.agentRunId, runId)))[0];
     expect(row).toMatchObject({
       tool: "propose_campaign",
       targetKind: "campaign",

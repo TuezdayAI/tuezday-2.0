@@ -52,7 +52,7 @@ describe("PR & media outreach API", () => {
   let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     emailProvider = new FakeOutboundEmailProvider();
     app = await buildAuthedApp({ db, llm: fakeGateway(), outboundEmail: emailProvider });
     workspaceId = (
@@ -119,7 +119,7 @@ describe("PR & media outreach API", () => {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
@@ -127,7 +127,7 @@ describe("PR & media outreach API", () => {
       status: "allowed",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
   }
 
   describe("media contacts", () => {

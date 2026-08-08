@@ -164,8 +164,12 @@ const SETUP_ORDER: SetupChecklistItem[] = [
  * progress, but the thing a founder should do about it now competes for
  * attention in the same ordered list as everything else, at the bottom.
  */
-function setupItems(db: Db, workspaceId: string, now: number): AgentInboxItem[] {
-  const state = getNextActionState(db, workspaceId);
+async function setupItems(
+  db: Db,
+  workspaceId: string,
+  now: number,
+): Promise<AgentInboxItem[]> {
+  const state = await getNextActionState(db, workspaceId);
   const items: AgentInboxItem[] = [];
   for (const key of SETUP_ORDER) {
     if (state.checklist[key]) continue;
@@ -212,7 +216,7 @@ export async function buildAgentInboxFeed(
     ...(await listAgentQuestions(db, workspaceId, { status: "open" })).map((question) =>
       questionItem(workspaceId, question),
     ),
-    ...setupItems(db, workspaceId, now),
+    ...(await setupItems(db, workspaceId, now)),
   ];
 
   const ranked = rankInboxItems(items, now);
@@ -225,7 +229,7 @@ export async function buildAgentInboxFeed(
   return {
     items: ranked.slice(0, bounded),
     counts,
-    checklist: checklistProgress(getNextActionState(db, workspaceId)),
+    checklist: checklistProgress(await getNextActionState(db, workspaceId)),
     generatedAt: now,
   };
 }

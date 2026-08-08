@@ -44,16 +44,16 @@ export function rowToUser(row: UserRow): User {
 }
 
 export async function getUserByEmail(db: Db, email: string): Promise<UserRow | undefined> {
-  return await db.select().from(users).where(eq(users.email, email.toLowerCase())).get();
+  return (await db.select().from(users).where(eq(users.email, email.toLowerCase())))[0];
 }
 
 export async function getUser(db: Db, id: string): Promise<User | undefined> {
-  const row = await db.select().from(users).where(eq(users.id, id)).get();
+  const row = (await db.select().from(users).where(eq(users.id, id)))[0];
   return row ? rowToUser(row) : undefined;
 }
 
 export async function updateUserName(db: Db, id: string, name: string): Promise<User | undefined> {
-  await db.update(users).set({ name, updatedAt: Date.now() }).where(eq(users.id, id)).run();
+  await db.update(users).set({ name, updatedAt: Date.now() }).where(eq(users.id, id));
   return await getUser(db, id);
 }
 
@@ -67,8 +67,7 @@ export async function createSession(db: Db, userId: string): Promise<string> {
       tokenHash: hashToken(token),
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
-    })
-    .run();
+    });
   return token;
 }
 
@@ -84,7 +83,7 @@ export async function registerAccount(db: Db, input: RegisterInput): Promise<{ u
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(users).values(row).run();
+  await db.insert(users).values(row);
   return { user: rowToUser(row), token: await createSession(db, row.id) };
 }
 
@@ -96,18 +95,17 @@ export async function login(db: Db, input: LoginInput): Promise<{ user: User; to
 
 /** Resolve a bearer token to its user, or null if unknown/expired. */
 export async function sessionUser(db: Db, token: string): Promise<User | null> {
-  const session = await db
+  const session = (await db
     .select()
     .from(sessions)
-    .where(eq(sessions.tokenHash, hashToken(token)))
-    .get();
+    .where(eq(sessions.tokenHash, hashToken(token))))[0];
   if (!session || session.expiresAt <= Date.now()) return null;
-  const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
+  const user = (await db.select().from(users).where(eq(users.id, session.userId)))[0];
   return user ? rowToUser(user) : null;
 }
 
 export async function revokeSession(db: Db, token: string): Promise<void> {
-  await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token))).run();
+  await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token)));
 }
 
 /**
@@ -121,8 +119,7 @@ export async function upsertGoogleUser(db: Db, profile: GoogleProfile): Promise<
     if (!existing.googleSub) {
       await db.update(users)
         .set({ googleSub: profile.sub, updatedAt: Date.now() })
-        .where(eq(users.id, existing.id))
-        .run();
+        .where(eq(users.id, existing.id));
     }
     return { user: rowToUser(existing), token: await createSession(db, existing.id) };
   }
@@ -136,6 +133,6 @@ export async function upsertGoogleUser(db: Db, profile: GoogleProfile): Promise<
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(users).values(row).run();
+  await db.insert(users).values(row);
   return { user: rowToUser(row), token: await createSession(db, row.id) };
 }

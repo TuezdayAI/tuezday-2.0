@@ -16,6 +16,7 @@ import {
   retryBackgroundJob,
 } from "../src/services/background-jobs";
 import { createTestDb } from "./helpers";
+import { DATABASE_NOW_MS } from "../src/services/task-leases";
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
@@ -31,14 +32,13 @@ describe("durable background job repository", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     const now = Date.now();
     await db.insert(workspaces)
       .values([
         { id: WORKSPACE_A, name: "A", createdAt: now, updatedAt: now },
         { id: WORKSPACE_B, name: "B", createdAt: now + 1, updatedAt: now + 1 },
-      ])
-      .run();
+      ]);
   });
 
   async function enqueue(
@@ -165,10 +165,9 @@ describe("durable background job repository", () => {
 
     await db.update(backgroundJobs)
       .set({
-        leaseExpiresAt: sql`CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) - 1`,
+        leaseExpiresAt: sql`${DATABASE_NOW_MS} - 1`,
       })
-      .where(eq(backgroundJobs.id, first!.id))
-      .run();
+      .where(eq(backgroundJobs.id, first!.id));
 
     const [second] = await claimBackgroundJobs(db, {
       owner: "worker-b",
@@ -204,8 +203,7 @@ describe("durable background job repository", () => {
 
     await db.update(backgroundJobs)
       .set({ availableAt: 0 })
-      .where(eq(backgroundJobs.id, queued.id))
-      .run();
+      .where(eq(backgroundJobs.id, queued.id));
     const [second] = await claimBackgroundJobs(db, {
       owner: "worker-b",
       leaseMs: 30_000,
@@ -244,7 +242,7 @@ describe("durable background job repository", () => {
     });
     expect(requeued!.id).not.toBe(dead!.id);
     expect(
-      (await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, dead!.id)).get())?.status,
+      ((await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, dead!.id)))[0])?.status,
     ).toBe("dead_letter");
   });
 
@@ -283,8 +281,7 @@ describe("durable background job repository", () => {
     });
     await db.update(backgroundJobs)
       .set({ startedAt: sql`${backgroundJobs.startedAt} - 25` })
-      .where(eq(backgroundJobs.id, queued.id))
-      .run();
+      .where(eq(backgroundJobs.id, queued.id));
     expect(await completeBackgroundJob(db, claim!, { ok: true })).toBe(true);
 
     const stats = await getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
@@ -294,13 +291,12 @@ describe("durable background job repository", () => {
 
   it("cascades queue history when its workspace is deleted", async () => {
     await enqueue(WORKSPACE_A, randomUUID());
-    await db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_A)).run();
+    await db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_A));
     expect(
       await db
         .select()
         .from(backgroundJobs)
-        .where(and(eq(backgroundJobs.workspaceId, WORKSPACE_A)))
-        .all(),
+        .where(and(eq(backgroundJobs.workspaceId, WORKSPACE_A))),
     ).toEqual([]);
   });
 });

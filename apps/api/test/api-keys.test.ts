@@ -8,13 +8,13 @@ let db: Db;
 let WS = "test-ws-api-keys";
 
 beforeAll(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   await db.insert(workspaces).values({
     id: WS,
     name: "API Keys Workspace",
     createdAt: Date.now(),
     updatedAt: Date.now(),
-  }).run();
+  });
 });
 
 test("api keys lifecycle", async () => {

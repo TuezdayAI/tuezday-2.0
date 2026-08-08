@@ -61,7 +61,7 @@ export async function createPersona(db: Db, workspaceId: string, input: UpsertPe
       createdAt: now,
       updatedAt: now,
     };
-    await tx.insert(personas).values(row).run();
+    await tx.insert(personas).values(row);
     await invalidateMatching(tx, workspaceId, {
       directItemIds: [],
       includeReadyNoMatch: true,
@@ -75,8 +75,7 @@ export async function listPersonas(db: DbExecutor, workspaceId: string): Promise
     .select()
     .from(personas)
     .where(eq(personas.workspaceId, workspaceId))
-    .orderBy(desc(personas.createdAt))
-    .all())
+    .orderBy(desc(personas.createdAt)))
     .map(rowToPersona);
 }
 
@@ -85,11 +84,10 @@ export async function getPersona(
   workspaceId: string,
   personaId: string,
 ): Promise<Persona | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(personas)
-    .where(and(eq(personas.workspaceId, workspaceId), eq(personas.id, personaId)))
-    .get();
+    .where(and(eq(personas.workspaceId, workspaceId), eq(personas.id, personaId))))[0];
   return row ? rowToPersona(row) : undefined;
 }
 
@@ -121,8 +119,7 @@ export async function updatePersona(
         avoid: input.avoid,
         updatedAt: now,
       })
-      .where(eq(personas.id, personaId))
-      .run();
+      .where(eq(personas.id, personaId));
     if (matchingChanged) {
       await invalidateMatching(tx, workspaceId, {
         directItemIds,
@@ -145,7 +142,7 @@ export async function deletePersona(db: Db, workspaceId: string, personaId: stri
     // Scoped guidance cleanup lives here, not in an FK cascade — see
     // deleteGuidanceForScope for the SQLite ALTER TABLE caveat.
     await deleteGuidanceForScope(tx, workspaceId, { personaId });
-    await tx.delete(personas).where(eq(personas.id, personaId)).run();
+    await tx.delete(personas).where(eq(personas.id, personaId));
     return true;
   });
 }

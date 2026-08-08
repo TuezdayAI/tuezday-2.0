@@ -93,7 +93,7 @@ interface MatchingFixture {
 async function seedFixture(
   input: { campaignStatus?: CampaignStatus } = {},
 ): Promise<MatchingFixture> {
-  const db = createTestDb();
+  const db = await createTestDb();
   const workspaceId = randomUUID();
   const sourceId = randomUUID();
   await db.insert(workspaces)
@@ -102,8 +102,7 @@ async function seedFixture(
       name: "Targeted matching",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(discoverySources)
     .values({
       id: sourceId,
@@ -121,8 +120,7 @@ async function seedFixture(
       lastAttemptedAt: null,
       executionVersion: 1,
       createdAt: 1,
-    })
-    .run();
+    });
 
   const editedPersona = await createPersona(
     db,
@@ -195,8 +193,7 @@ async function seedFixture(
         contentHash: `content-${id}`,
         duplicateOfId: options.duplicateOfId ?? null,
         createdAt: 1,
-      })
-      .run();
+      });
     return id;
   };
 
@@ -230,8 +227,7 @@ async function seedFixture(
         score: 80,
         reason: "Existing match",
         createdAt: 1,
-      })
-      .run();
+      });
   };
 
   await insertMatch(personaItem, editedPersona.id, null);
@@ -270,11 +266,10 @@ async function seedFixture(
 }
 
 async function itemState(db: Db, itemId: string) {
-  return (await db
+  return ((await db
     .select()
     .from(discoveredItems)
-    .where(eq(discoveredItems.id, itemId))
-    .get())!;
+    .where(eq(discoveredItems.id, itemId)))[0])!;
 }
 
 async function expectPending(db: Db, itemId: string): Promise<void> {
@@ -336,8 +331,7 @@ describe("incremental matching invalidation", () => {
       await fixture.db
         .select()
         .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.itemId, fixture.item.persona))
-        .all(),
+        .where(eq(discoveredItemMatches.itemId, fixture.item.persona)),
     ).toHaveLength(1);
     expect(await claimedIds(fixture)).toEqual(
       new Set([fixture.item.persona, fixture.item.zeroMatch]),
@@ -387,8 +381,7 @@ describe("incremental matching invalidation", () => {
       await fixture.db
         .select()
         .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.personaId, fixture.persona.edited))
-        .all(),
+        .where(eq(discoveredItemMatches.personaId, fixture.persona.edited)),
     ).toEqual([]);
     expect(await claimedIds(fixture)).toEqual(new Set([fixture.item.persona]));
   });
@@ -556,27 +549,27 @@ describe("incremental matching invalidation", () => {
       await fixture.db
         .select()
         .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.campaignId, fixture.campaign.edited))
-        .all(),
+        .where(eq(discoveredItemMatches.campaignId, fixture.campaign.edited)),
     ).toEqual([]);
     expect(
-      await fixture.db
+      (await fixture.db
         .select()
         .from(campaigns)
-        .where(eq(campaigns.id, fixture.campaign.edited))
-        .get(),
+        .where(eq(campaigns.id, fixture.campaign.edited)))[0],
     ).toBeUndefined();
   });
 
   it("rolls back a persona semantic write when its invalidation fails", async () => {
     const fixture = await seedFixture();
-    await fixture.db.run(sql.raw(`
+    await fixture.db.execute(sql.raw(`
+      CREATE FUNCTION reject_matching_invalidation() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'reject_matching_invalidation'; END
+      $$ LANGUAGE plpgsql;
       CREATE TRIGGER reject_matching_invalidation
       BEFORE UPDATE OF matching_state ON discovered_items
-      WHEN OLD.matching_state = 'ready' AND NEW.matching_state = 'pending'
-      BEGIN
-        SELECT RAISE(ABORT, 'reject_matching_invalidation');
-      END
+      FOR EACH ROW
+      WHEN (OLD.matching_state = 'ready' AND NEW.matching_state = 'pending')
+      EXECUTE FUNCTION reject_matching_invalidation();
     `));
 
     expect(async () =>
@@ -592,11 +585,10 @@ describe("incremental matching invalidation", () => {
     ).toThrow("reject_matching_invalidation");
 
     expect(
-      await fixture.db
+      (await fixture.db
         .select()
         .from(personas)
-        .where(eq(personas.id, fixture.persona.edited))
-        .get(),
+        .where(eq(personas.id, fixture.persona.edited)))[0],
     ).toMatchObject({
       name: "Edited persona",
       description: "Original semantic description",
@@ -608,13 +600,15 @@ describe("incremental matching invalidation", () => {
 
   it("rolls back a campaign semantic write when its invalidation fails", async () => {
     const fixture = await seedFixture();
-    await fixture.db.run(sql.raw(`
+    await fixture.db.execute(sql.raw(`
+      CREATE FUNCTION reject_campaign_invalidation() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'reject_campaign_invalidation'; END
+      $$ LANGUAGE plpgsql;
       CREATE TRIGGER reject_campaign_invalidation
       BEFORE UPDATE OF matching_state ON discovered_items
-      WHEN OLD.matching_state = 'ready' AND NEW.matching_state = 'pending'
-      BEGIN
-        SELECT RAISE(ABORT, 'reject_campaign_invalidation');
-      END
+      FOR EACH ROW
+      WHEN (OLD.matching_state = 'ready' AND NEW.matching_state = 'pending')
+      EXECUTE FUNCTION reject_campaign_invalidation();
     `));
 
     expect(async () =>
@@ -632,11 +626,10 @@ describe("incremental matching invalidation", () => {
     ).toThrow("reject_campaign_invalidation");
 
     expect(
-      await fixture.db
+      (await fixture.db
         .select()
         .from(campaigns)
-        .where(eq(campaigns.id, fixture.campaign.edited))
-        .get(),
+        .where(eq(campaigns.id, fixture.campaign.edited)))[0],
     ).toMatchObject({
       name: "Edited campaign",
       objective: "Original objective",

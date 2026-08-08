@@ -33,7 +33,7 @@ describe("preferences API (Sprint 68)", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     llm = new RouteGateway();
     app = await buildAuthedApp({ db, llm });
     workspaceId = (

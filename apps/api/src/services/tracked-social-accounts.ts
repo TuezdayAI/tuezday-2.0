@@ -68,7 +68,7 @@ async function findByHandle(
   platform: string,
   handle: string,
 ): Promise<TrackedSocialAccountRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(trackedSocialAccounts)
     .where(
@@ -77,8 +77,7 @@ async function findByHandle(
         eq(trackedSocialAccounts.platform, platform),
         eq(trackedSocialAccounts.handle, handle),
       ),
-    )
-    .get();
+    ))[0];
 }
 
 function trackedAccountIds(configJson: string): string[] {
@@ -113,8 +112,7 @@ async function invalidateSourcesForTrackedAccount(
       configJson: discoverySources.configJson,
     })
     .from(discoverySources)
-    .where(eq(discoverySources.workspaceId, workspaceId))
-    .all())
+    .where(eq(discoverySources.workspaceId, workspaceId)))
     .filter((source) =>
       trackedAccountIds(source.configJson).includes(accountId),
     )
@@ -132,8 +130,7 @@ async function invalidateSourcesForTrackedAccount(
         eq(discoverySources.workspaceId, workspaceId),
         inArray(discoverySources.id, affectedSourceIds),
       ),
-    )
-    .run();
+    );
   await db.update(discoveryJobs)
     .set({
       status: "skipped",
@@ -150,8 +147,7 @@ async function invalidateSourcesForTrackedAccount(
         inArray(discoveryJobs.sourceId, affectedSourceIds),
         inArray(discoveryJobs.status, ["queued", "running"]),
       ),
-    )
-    .run();
+    );
 }
 
 export async function createTrackedSocialAccount(
@@ -180,7 +176,7 @@ export async function createTrackedSocialAccount(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(trackedSocialAccounts).values(row).run();
+  await db.insert(trackedSocialAccounts).values(row);
   return rowToAccount(row);
 }
 
@@ -189,8 +185,7 @@ export async function listTrackedSocialAccounts(db: Db, workspaceId: string): Pr
     .select()
     .from(trackedSocialAccounts)
     .where(eq(trackedSocialAccounts.workspaceId, workspaceId))
-    .orderBy(desc(trackedSocialAccounts.createdAt))
-    .all())
+    .orderBy(desc(trackedSocialAccounts.createdAt)))
     .map(rowToAccount);
 }
 
@@ -199,7 +194,7 @@ export async function getTrackedSocialAccount(
   workspaceId: string,
   accountId: string,
 ): Promise<TrackedSocialAccount | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(trackedSocialAccounts)
     .where(
@@ -207,8 +202,7 @@ export async function getTrackedSocialAccount(
         eq(trackedSocialAccounts.workspaceId, workspaceId),
         eq(trackedSocialAccounts.id, accountId),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToAccount(row) : undefined;
 }
 
@@ -225,7 +219,7 @@ export async function updateTrackedSocialAccount(
   if (input.handle !== undefined) {
     handle = normalizeTrackedHandle(existing.platform, input.handle);
     if (!handle) throw new InvalidTrackedHandleError(input.handle);
-    const clash = await db
+    const clash = (await db
       .select({ id: trackedSocialAccounts.id })
       .from(trackedSocialAccounts)
       .where(
@@ -235,8 +229,7 @@ export async function updateTrackedSocialAccount(
           eq(trackedSocialAccounts.handle, handle),
           ne(trackedSocialAccounts.id, accountId),
         ),
-      )
-      .get();
+      ))[0];
     if (clash) throw new DuplicateTrackedAccountError(existing.platform, handle);
   }
 
@@ -267,8 +260,7 @@ export async function updateTrackedSocialAccount(
           eq(trackedSocialAccounts.workspaceId, workspaceId),
           eq(trackedSocialAccounts.id, accountId),
         ),
-      )
-      .run();
+      );
     if (executionChanged) {
       await invalidateSourcesForTrackedAccount(
         tx as unknown as Db,
@@ -303,8 +295,7 @@ export async function deleteTrackedSocialAccount(
           eq(trackedSocialAccounts.workspaceId, workspaceId),
           eq(trackedSocialAccounts.id, accountId),
         ),
-      )
-      .run();
+      );
   });
   return true;
 }
@@ -328,8 +319,7 @@ export async function resolveTrackedAccounts(
         eq(trackedSocialAccounts.enabled, true),
         inArray(trackedSocialAccounts.id, ids),
       ),
-    )
-    .all())
+    ))
     .map(rowToAccount);
 }
 

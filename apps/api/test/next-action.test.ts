@@ -19,7 +19,7 @@ describe("next-action API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeGateway });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Guided" } })
@@ -118,8 +118,7 @@ describe("next-action API", () => {
         status: "connected",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
 
     // team_invited: a second member (inserted directly; the invite flow is
     // covered by teams.test.ts).
@@ -131,8 +130,7 @@ describe("next-action API", () => {
         userId: teammate.id,
         role: "member",
         createdAt: now,
-      })
-      .run();
+      });
 
     const body = await fetchNextAction();
     expect(body.state.checklist).toEqual({

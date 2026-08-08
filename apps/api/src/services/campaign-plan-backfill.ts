@@ -67,8 +67,7 @@ export async function backfillMissingCampaignPlans(db: Db): Promise<CampaignPlan
       // Keyset, not offset: the predicate stops matching rows we just handled,
       // so an offset would skip campaigns. The cursor always advances.
       .orderBy(asc(campaigns.id))
-      .limit(BATCH_SIZE)
-      .all();
+      .limit(BATCH_SIZE);
     if (batch.length === 0) break;
 
     for (const campaign of batch) {

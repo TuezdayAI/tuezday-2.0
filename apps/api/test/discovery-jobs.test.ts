@@ -1,11 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { discoveryJobSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
-import { createDb, type Db } from "../src/db";
+import type { Db } from "../src/db";
 import { discoveryJobs, discoverySources, workspaces } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { safeFetchError, safeFetchPublicMessage } from "../src/safe-fetch";
@@ -18,8 +15,9 @@ import {
   heartbeatDiscoveryJob,
 } from "../src/services/discovery-jobs";
 import { listDiscoverySources } from "../src/services/discovery";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, connectTestDbAgain, createTestDb } from "./helpers";
 import { fixtureSafeFetch } from "./safe-fetch-fixtures";
+import { DATABASE_NOW_MS } from "../src/services/task-leases";
 
 const stubLlm: LlmGateway = {
   async generate() {
@@ -47,7 +45,7 @@ describe("discovery job ledger (Sprint 46)", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: stubLlm, safeFetch: stubFetcher });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Jobs" } })
@@ -76,8 +74,7 @@ describe("discovery job ledger (Sprint 46)", () => {
     return await db
       .select()
       .from(discoveryJobs)
-      .where(eq(discoveryJobs.workspaceId, workspaceId))
-      .all();
+      .where(eq(discoveryJobs.workspaceId, workspaceId));
   }
 
   it("enqueues one queued job per due source, never a duplicate", async () => {
@@ -100,113 +97,103 @@ describe("discovery job ledger (Sprint 46)", () => {
   });
 
   it("converges concurrent enqueue attempts through the database unique index", async () => {
-    const tempDir = mkdtempSync(path.join(tmpdir(), "tuezday-s49-enqueue-"));
-    const databaseFile = path.join(tempDir, "shared.sqlite");
-    const dbA = createDb(databaseFile);
-    const dbB = createDb(databaseFile);
-    try {
-      await dbA.insert(workspaces)
-        .values({
-          id: "workspace-shared",
-          name: "Shared",
-          createdAt: 1,
-          updatedAt: 1,
-        })
-        .run();
-      await dbA.insert(discoverySources)
-        .values({
-          id: "source-shared",
+    const dbA = await createTestDb();
+    // Instance B is a separate pool onto the same database — the unique index
+    // is the only thing arbitrating between them.
+    const dbB = await connectTestDbAgain(dbA);
+    await dbA.insert(workspaces)
+      .values({
+        id: "workspace-shared",
+        name: "Shared",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    await dbA.insert(discoverySources)
+      .values({
+        id: "source-shared",
+        workspaceId: "workspace-shared",
+        type: "rss",
+        name: "Shared source",
+        configJson: JSON.stringify({
+          feedUrl: "https://feeds.example.com/shared.xml",
+        }),
+        enabled: true,
+        status: "active",
+        lastError: null,
+        lastFetchedAt: null,
+        connectionId: null,
+        cursorJson: "{}",
+        backoffUntil: null,
+        lastAttemptedAt: null,
+        executionVersion: 1,
+        createdAt: 1,
+      });
+    const [source] = await listDiscoverySources(dbA, "workspace-shared");
+
+    const attempts = await Promise.allSettled([
+      Promise.resolve().then(async () =>
+        enqueueDueDiscoveryJobs(
+          dbA,
+          "workspace-shared",
+          [source!],
+          10,
+        ),
+      ),
+      Promise.resolve().then(async () =>
+        enqueueDueDiscoveryJobs(
+          dbB,
+          "workspace-shared",
+          [source!],
+          10,
+        ),
+      ),
+    ]);
+
+    expect(
+      attempts.map((attempt) =>
+        attempt.status === "fulfilled" ? attempt.value : "rejected",
+      ),
+    ).toEqual(expect.arrayContaining([0, 1]));
+    expect(
+      await dbA
+        .select()
+        .from(discoveryJobs)
+        .where(eq(discoveryJobs.sourceId, "source-shared")),
+    ).toHaveLength(1);
+
+    const claims = await Promise.allSettled([
+      Promise.resolve().then(async () =>
+        claimNextDiscoveryJob(dbA, {
           workspaceId: "workspace-shared",
-          type: "rss",
-          name: "Shared source",
-          configJson: JSON.stringify({
-            feedUrl: "https://feeds.example.com/shared.xml",
-          }),
-          enabled: true,
-          status: "active",
-          lastError: null,
-          lastFetchedAt: null,
-          connectionId: null,
-          cursorJson: "{}",
-          backoffUntil: null,
-          lastAttemptedAt: null,
-          executionVersion: 1,
-          createdAt: 1,
-        })
-        .run();
-      const [source] = await listDiscoverySources(dbA, "workspace-shared");
-
-      const attempts = await Promise.allSettled([
-        Promise.resolve().then(async () =>
-          enqueueDueDiscoveryJobs(
-            dbA,
-            "workspace-shared",
-            [source!],
-            10,
-          ),
-        ),
-        Promise.resolve().then(async () =>
-          enqueueDueDiscoveryJobs(
-            dbB,
-            "workspace-shared",
-            [source!],
-            10,
-          ),
-        ),
-      ]);
-
-      expect(
-        attempts.map((attempt) =>
-          attempt.status === "fulfilled" ? attempt.value : "rejected",
-        ),
-      ).toEqual(expect.arrayContaining([0, 1]));
-      expect(
-        await dbA
-          .select()
-          .from(discoveryJobs)
-          .where(eq(discoveryJobs.sourceId, "source-shared"))
-          .all(),
-      ).toHaveLength(1);
-
-      const claims = await Promise.allSettled([
-        Promise.resolve().then(async () =>
-          claimNextDiscoveryJob(dbA, {
-            workspaceId: "workspace-shared",
-            owner: "api-a:shared-claim",
-            leaseMs: 45_000,
-          }),
-        ),
-        Promise.resolve().then(async () =>
-          claimNextDiscoveryJob(dbB, {
-            workspaceId: "workspace-shared",
-            owner: "api-b:shared-claim",
-            leaseMs: 45_000,
-          }),
-        ),
-      ]);
-      const claimedRows = claims
-        .filter(
-          (
-            attempt,
-          ): attempt is PromiseFulfilledResult<
-            Awaited<ReturnType<typeof claimNextDiscoveryJob>>
-          > => attempt.status === "fulfilled",
-        )
-        .map((attempt) => attempt.value)
-        .filter((claim) => claim !== null);
-      expect(claimedRows).toHaveLength(1);
-      expect(
-        (await dbA
-          .select()
-          .from(discoveryJobs)
-          .where(eq(discoveryJobs.sourceId, "source-shared"))
-          .get())!.leaseOwner,
-      ).toBe(claimedRows[0]!.leaseOwner);
-    } finally {
-      (dbA as Db & { $client: { close(): void } }).$client.close();
-      (dbB as Db & { $client: { close(): void } }).$client.close();
-      rmSync(tempDir, { recursive: true, force: true });
-    }
+          owner: "api-a:shared-claim",
+          leaseMs: 45_000,
+        }),
+      ),
+      Promise.resolve().then(async () =>
+        claimNextDiscoveryJob(dbB, {
+          workspaceId: "workspace-shared",
+          owner: "api-b:shared-claim",
+          leaseMs: 45_000,
+        }),
+      ),
+    ]);
+    const claimedRows = claims
+      .filter(
+        (
+          attempt,
+        ): attempt is PromiseFulfilledResult<
+          Awaited<ReturnType<typeof claimNextDiscoveryJob>>
+        > => attempt.status === "fulfilled",
+      )
+      .map((attempt) => attempt.value)
+      .filter((claim) => claim !== null);
+    expect(claimedRows).toHaveLength(1);
+    expect(
+      ((await dbA
+        .select()
+        .from(discoveryJobs)
+        .where(eq(discoveryJobs.sourceId, "source-shared")))[0])!.leaseOwner,
+    ).toBe(claimedRows[0]!.leaseOwner);
   });
 
   it("skips a source in backoff until it is due", async () => {
@@ -214,8 +201,7 @@ describe("discovery job ledger (Sprint 46)", () => {
     const now = Date.now();
     await db.update(discoverySources)
       .set({ backoffUntil: now + 60_000 })
-      .where(eq(discoverySources.id, source.id))
-      .run();
+      .where(eq(discoverySources.id, source.id));
     expect(await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), now)).toBe(0);
     expect(await jobRows()).toHaveLength(0);
     // past the backoff the source is due again
@@ -269,12 +255,9 @@ describe("discovery job ledger (Sprint 46)", () => {
 
     await db.update(discoveryJobs)
       .set({
-        leaseExpiresAt: sql`
-          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) - 1
-        `,
+        leaseExpiresAt: sql`${DATABASE_NOW_MS} - 1`,
       })
-      .where(eq(discoveryJobs.id, first.id))
-      .run();
+      .where(eq(discoveryJobs.id, first.id));
 
     const reclaimed = (await claimNextDiscoveryJob(db, {
       workspaceId,
@@ -307,18 +290,16 @@ describe("discovery job ledger (Sprint 46)", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    const updatedSource = (await db
+    const updatedSource = ((await db
       .select()
       .from(discoverySources)
-      .where(eq(discoverySources.id, source.id))
-      .get())!;
+      .where(eq(discoverySources.id, source.id)))[0])!;
     expect(updatedSource.executionVersion).toBe(2);
 
-    const cancelled = (await db
+    const cancelled = ((await db
       .select()
       .from(discoveryJobs)
-      .where(eq(discoveryJobs.id, claim.id))
-      .get())!;
+      .where(eq(discoveryJobs.id, claim.id)))[0])!;
     expect(cancelled.status).toBe("skipped");
     expect(cancelled.error).toBe("source_version_changed");
     expect(cancelled.finishedAt).not.toBeNull();
@@ -344,18 +325,16 @@ describe("discovery job ledger (Sprint 46)", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    const updatedSource = (await db
+    const updatedSource = ((await db
       .select()
       .from(discoverySources)
-      .where(eq(discoverySources.id, source.id))
-      .get())!;
+      .where(eq(discoverySources.id, source.id)))[0])!;
     expect(updatedSource.executionVersion).toBe(1);
     expect(
-      (await db
+      ((await db
         .select()
         .from(discoveryJobs)
-        .where(eq(discoveryJobs.id, claim.id))
-        .get())!.status,
+        .where(eq(discoveryJobs.id, claim.id)))[0])!.status,
     ).toBe("running");
   });
 
@@ -467,14 +446,14 @@ describe("discovery job ledger (Sprint 46)", () => {
     expect(await failDiscoveryJob(db, a, "late stale failure")).toBe(false);
     expect(await failDiscoveryJob(db, b, "x".repeat(600))).toBe(true);
 
-    const done = (await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, a.id)).get())!;
+    const done = ((await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, a.id)))[0])!;
     expect(done.status).toBe("succeeded");
     expect(done.fetchedCount).toBe(10);
     expect(done.newCount).toBe(4);
     expect(done.finishedAt).not.toBeNull();
     expect(done.error).toBeNull();
 
-    const failed = (await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, b.id)).get())!;
+    const failed = ((await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, b.id)))[0])!;
     expect(failed.status).toBe("failed");
     expect(failed.error).toHaveLength(500);
     expect(failed.finishedAt).not.toBeNull();

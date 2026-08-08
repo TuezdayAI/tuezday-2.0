@@ -22,14 +22,12 @@ const LANE_ID = "44444444-4444-4444-8444-444444444444";
 const ACTOR = { userId: null, label: "founder" };
 
 async function fixture() {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Pipelines", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Pipelines", createdAt: 1, updatedAt: 1 });
   for (const id of [CAMPAIGN_ID, OTHER_CAMPAIGN_ID]) {
     await db.insert(campaigns)
-      .values({ id, workspaceId: WORKSPACE_ID, name: `Campaign ${id.slice(0, 4)}`, createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id, workspaceId: WORKSPACE_ID, name: `Campaign ${id.slice(0, 4)}`, createdAt: 1, updatedAt: 1 });
   }
   await db.insert(campaignLanes)
     .values({
@@ -40,8 +38,7 @@ async function fixture() {
       name: "Founder LinkedIn",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   return db;
 }
 

@@ -122,8 +122,7 @@ export class AgentRunner {
         system: params.system,
         inputMessages: JSON.stringify(params.messages),
         startedAt,
-      })
-      .run();
+      });
     emit({ type: "run_start", runId });
 
     const messages: AgentMessage[] = [...params.messages];
@@ -152,8 +151,7 @@ export class AgentRunner {
           kind: "model_call",
           createdAt: Date.now(),
           ...row,
-        } as typeof agentRunSteps.$inferInsert)
-        .run();
+        } as typeof agentRunSteps.$inferInsert);
     };
 
     loop: while (true) {
@@ -322,8 +320,7 @@ export class AgentRunner {
         stepCount: stepIndex,
         finishedAt: Date.now(),
       })
-      .where(eq(agentRuns.id, runId))
-      .run();
+      .where(eq(agentRuns.id, runId));
     emit({ type: "run_end", stopReason, usage });
 
     return {

@@ -58,11 +58,10 @@ function statusFromDomain(domain: OutboundEmailDomain): EmailSenderStatus {
 }
 
 export async function getEmailSender(db: Db, workspaceId: string): Promise<EmailSender | null> {
-  const row = await db
+  const row = (await db
     .select()
     .from(workspaceEmailSenders)
-    .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-    .get();
+    .where(eq(workspaceEmailSenders.workspaceId, workspaceId)))[0];
   return row ? rowToSender(row) : null;
 }
 
@@ -74,8 +73,7 @@ async function persistProviderFailure(db: Db, workspaceId: string, error: unknow
       lastCheckedAt: Date.now(),
       updatedAt: Date.now(),
     })
-    .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-    .run();
+    .where(eq(workspaceEmailSenders.workspaceId, workspaceId));
 }
 
 export async function updateEmailSender(
@@ -128,8 +126,7 @@ export async function updateEmailSender(
             lastError: errorMessage(error),
             updatedAt: now,
           },
-        })
-        .run();
+        });
       throw error;
     }
   }
@@ -171,8 +168,7 @@ export async function updateEmailSender(
         lastError: values.lastError,
         updatedAt: values.updatedAt,
       },
-    })
-    .run();
+    });
   return (await getEmailSender(db, workspaceId))!;
 }
 
@@ -193,8 +189,7 @@ export async function verifyEmailSender(
     const now = Date.now();
     await db.update(workspaceEmailSenders)
       .set({ status: "pending", lastError: null, lastCheckedAt: now, updatedAt: now })
-      .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-      .run();
+      .where(eq(workspaceEmailSenders.workspaceId, workspaceId));
   } catch (error) {
     await persistProviderFailure(db, workspaceId, error);
     throw error;
@@ -225,8 +220,7 @@ export async function refreshEmailSender(
         lastCheckedAt: now,
         updatedAt: now,
       })
-      .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
-      .run();
+      .where(eq(workspaceEmailSenders.workspaceId, workspaceId));
   } catch (error) {
     await persistProviderFailure(db, workspaceId, error);
     throw error;

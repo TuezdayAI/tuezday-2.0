@@ -128,7 +128,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
   let packageId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Variants" } })
@@ -174,7 +174,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
         observedAt: Date.now(),
       });
     });
-    const story = (await db.select().from(canonicalExternalStories).all())[0]!;
+    const story = (await db.select().from(canonicalExternalStories))[0]!;
     const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
     const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const opportunityId = randomUUID();
@@ -206,16 +206,14 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
         expiresAt: null,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     packageId = await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId });
     await runPackageAssessments(db, sufficiencyGateway(), { workspaceId, ...RUN_OPTS });
     await fanOutPackage(db, workspaceId, packageId, { userId });
-    deliverableId = (await db
+    deliverableId = ((await db
       .select()
       .from(deliverables)
-      .where(eq(deliverables.packageId, packageId))
-      .get())!.id;
+      .where(eq(deliverables.packageId, packageId)))[0])!.id;
   });
 
   afterEach(async () => {
@@ -223,7 +221,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
   });
 
   async function deliverableRow() {
-    return (await db.select().from(deliverables).where(eq(deliverables.id, deliverableId)).get())!;
+    return ((await db.select().from(deliverables).where(eq(deliverables.id, deliverableId)))[0])!;
   }
 
   it("generates a variant with a full replayable context snapshot", async () => {
@@ -291,7 +289,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
     expect(detail.variants.map((variant) => variant.variantVersion)).toEqual([2, 1]);
     expect(detail.variants.every((variant) => variant.status === "candidate")).toBe(true);
     // Two snapshots, one per variant, both intact.
-    expect(await db.select().from(contextSnapshots).all()).toHaveLength(2);
+    expect(await db.select().from(contextSnapshots)).toHaveLength(2);
     expect(detail.variants[1]!.content).toBe("Drafted post #1");
   });
 
@@ -346,8 +344,8 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
     // Parked: nothing claims it any more.
     const idle = await runVariantGeneration(db, draftGateway(), { workspaceId, ...RUN_OPTS });
     expect(idle.claimed).toBe(0);
-    expect(await db.select().from(variants).all()).toHaveLength(0);
-    expect(await db.select().from(contextSnapshots).all()).toHaveLength(0);
+    expect(await db.select().from(variants)).toHaveLength(0);
+    expect(await db.select().from(contextSnapshots)).toHaveLength(0);
 
     // Operator regenerate resets the queue and generation succeeds.
     await decideDeliverable(db, workspaceId, deliverableId, {

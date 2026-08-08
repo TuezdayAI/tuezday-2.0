@@ -73,9 +73,9 @@ let workspaceId: string;
 let sessionId: string;
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   workspaceId = randomUUID();
-  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 });
   await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
   await updateBrainDoc(db, workspaceId, "voice", "## Tone\n\nPlain, specific, never breathless.\n");
   sessionId = (await createSession(db, workspaceId, null, {})).id;
@@ -94,8 +94,7 @@ async function seedDraft(state = "pending_review"): Promise<string> {
       state,
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -111,8 +110,7 @@ async function seedSignal(title: string, summary: string): Promise<string> {
       enabled: true,
       status: "ok",
       createdAt: 1,
-    })
-    .run();
+    });
   const id = randomUUID();
   await db.insert(discoveredItems)
     .values({
@@ -126,8 +124,7 @@ async function seedSignal(title: string, summary: string): Promise<string> {
       status: "new",
       matchingState: "ready",
       createdAt: 1,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -169,7 +166,7 @@ describe("pinning", () => {
 
   it("refuses a pin whose target is not in this workspace", async () => {
     const rival = randomUUID();
-    await db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 }).run();
+    await db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 });
     const theirs = await createCampaign(db, rival, upsertCampaignInputSchema.parse({ name: "Theirs" }));
 
     const outcome = await createChatPin(db, undefined, workspaceId, sessionId, {

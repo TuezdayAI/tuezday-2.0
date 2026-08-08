@@ -58,21 +58,21 @@ describe("upsertGoogleUser", () => {
   const profile = { sub: "g-1", email: "founder@acme.com", emailVerified: true as const, name: "Founder" };
 
   it("creates a password-less user and a usable session for a new email", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const { user, token } = await upsertGoogleUser(db, profile);
     expect(user.email).toBe("founder@acme.com");
     expect((await sessionUser(db, token))?.id).toBe(user.id); // session works
   });
 
   it("links to an existing email/password account (no duplicate)", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const existing = await registerAccount(db, { email: "founder@acme.com", password: "pw-12345", name: "Founder" });
     const { user } = await upsertGoogleUser(db, profile);
     expect(user.id).toBe(existing.user.id); // same account
   });
 
   it("is idempotent across repeat Google logins", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const first = await upsertGoogleUser(db, profile);
     const second = await upsertGoogleUser(db, profile);
     expect(second.user.id).toBe(first.user.id);
@@ -89,7 +89,7 @@ function googleFetcher(userinfo: object): typeof fetch {
 
 describe("Google auth routes", () => {
   it("GET /auth/google/url returns an authorize URL (public, no token)", async () => {
-    const app = await buildApp({ db: createTestDb() });
+    const app = await buildApp({ db: await createTestDb() });
     const res = await app.inject({ method: "GET", url: "/auth/google/url?state=abc" });
     expect(res.statusCode).toBe(200);
     expect(res.json().url).toContain("accounts.google.com");
@@ -97,7 +97,7 @@ describe("Google auth routes", () => {
 
   it("503s when Google is unconfigured", async () => {
     delete process.env.GOOGLE_CLIENT_ID;
-    const app = await buildApp({ db: createTestDb() });
+    const app = await buildApp({ db: await createTestDb() });
     const res = await app.inject({ method: "GET", url: "/auth/google/url?state=abc" });
     expect(res.statusCode).toBe(503);
     expect(res.json().error).toBe("google_not_configured");
@@ -105,7 +105,7 @@ describe("Google auth routes", () => {
 
   it("POST /auth/google/callback exchanges the code and returns a session", async () => {
     const app = await buildApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       fetcher: googleFetcher({ sub: "g-9", email: "new@acme.com", email_verified: true, name: "New" }),
     });
     const res = await app.inject({ method: "POST", url: "/auth/google/callback", payload: { code: "c" } });
@@ -116,7 +116,7 @@ describe("Google auth routes", () => {
 
   it("401s an unverified Google email", async () => {
     const app = await buildApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       fetcher: googleFetcher({ sub: "g", email: "x@y.com", email_verified: false, name: "" }),
     });
     const res = await app.inject({ method: "POST", url: "/auth/google/callback", payload: { code: "c" } });

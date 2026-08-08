@@ -82,8 +82,7 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
             isNotNull(approvalDecisions.reason),
           ),
         )
-        .orderBy(desc(approvalDecisions.createdAt))
-        .all();
+        .orderBy(desc(approvalDecisions.createdAt));
       for (const row of decisionRows) {
         if (!reasonByDraft.has(row.draftId) && row.reason) {
           reasonByDraft.set(row.draftId, compactText(row.reason, INSTRUCTION_CHARS));
@@ -106,8 +105,7 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
             inArray(draftRevisionTurns.draftId, draftIds),
           ),
         )
-        .orderBy(draftRevisionTurns.createdAt)
-        .all();
+        .orderBy(draftRevisionTurns.createdAt);
       for (const turn of turns) {
         const list = turnsByDraft.get(turn.draftId) ?? [];
         if (list.length < INSTRUCTIONS_PER_DRAFT) {

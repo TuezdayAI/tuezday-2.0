@@ -21,8 +21,7 @@ async function seedWorkspace(db: Db, name = "Action Lab") {
   const now = Date.now();
   const id = randomUUID();
   await db.insert(workspaces)
-    .values({ id, name, analyticsOptOut: false, websiteUrl: null, onboardingStep: null, createdAt: now, updatedAt: now })
-    .run();
+    .values({ id, name, analyticsOptOut: false, websiteUrl: null, onboardingStep: null, createdAt: now, updatedAt: now });
   return id;
 }
 
@@ -50,8 +49,7 @@ async function seedCampaign(db: Db, workspaceId: string, automationMode: Automat
       currentPlanRevisionId: null,
       createdAt: now,
       updatedAt: now,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -62,7 +60,7 @@ async function rule(
   scopeId: string,
   actionKind: ExternalActionKind,
 ) {
-  return await db
+  return (await db
     .select()
     .from(externalActionPolicyRules)
     .where(
@@ -72,8 +70,7 @@ async function rule(
         eq(externalActionPolicyRules.scopeId, scopeId),
         eq(externalActionPolicyRules.actionKind, actionKind),
       ),
-    )
-    .get();
+    ))[0];
 }
 
 function actionRow(workspaceId: string, idempotencyKey = "publish:one") {
@@ -116,7 +113,7 @@ function actionRow(workspaceId: string, idempotencyKey = "publish:one") {
 
 describe("external action persistence", () => {
   it("creates safe workspace defaults for every action kind idempotently", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
 
     await ensureWorkspaceActionPolicies(db, workspaceId);
@@ -125,15 +122,14 @@ describe("external action persistence", () => {
     const rows = await db
       .select()
       .from(externalActionPolicyRules)
-      .where(eq(externalActionPolicyRules.workspaceId, workspaceId))
-      .all();
+      .where(eq(externalActionPolicyRules.workspaceId, workspaceId));
     expect(rows).toHaveLength(6);
     expect(rows.every((row) => row.scope === "workspace" && row.rule === "human_required"))
       .toBe(true);
   });
 
   it("preserves scheduled-auto execution while gating manual and human-in-loop campaigns", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const scheduled = await seedCampaign(db, workspaceId, "scheduled_auto");
     const manual = await seedCampaign(db, workspaceId, "manual");
@@ -154,7 +150,7 @@ describe("external action persistence", () => {
   });
 
   it("backfills every existing workspace and campaign without duplicate rows", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const firstWorkspace = await seedWorkspace(db, "First");
     const secondWorkspace = await seedWorkspace(db, "Second");
     await seedCampaign(db, firstWorkspace, "scheduled_auto");
@@ -163,31 +159,31 @@ describe("external action persistence", () => {
     await backfillExternalActionPolicies(db);
     await backfillExternalActionPolicies(db);
 
-    expect(await db.select().from(externalActionPolicyRules).all()).toHaveLength(24);
+    expect(await db.select().from(externalActionPolicyRules)).toHaveLength(24);
   });
 
   it("enforces one policy per scope/action and one action per idempotency key", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     await ensureWorkspaceActionPolicies(db, workspaceId);
     const existing = (await rule(db, workspaceId, "workspace", workspaceId, "publish"))!;
 
     expect(async () =>
-      await db.insert(externalActionPolicyRules).values({ ...existing, id: randomUUID() }).run(),
+      await db.insert(externalActionPolicyRules).values({ ...existing, id: randomUUID() }),
     ).toThrow();
 
     const first = actionRow(workspaceId);
-    await db.insert(externalActions).values(first).run();
+    await db.insert(externalActions).values(first);
     expect(async () =>
-      await db.insert(externalActions).values({ ...actionRow(workspaceId), idempotencyKey: first.idempotencyKey }).run(),
+      await db.insert(externalActions).values({ ...actionRow(workspaceId), idempotencyKey: first.idempotencyKey }),
     ).toThrow();
   });
 
   it("cascades immutable decisions when their action is deleted", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const action = actionRow(workspaceId);
-    await db.insert(externalActions).values(action).run();
+    await db.insert(externalActions).values(action);
     await db.insert(externalActionDecisions)
       .values({
         id: randomUUID(),
@@ -200,10 +196,9 @@ describe("external action persistence", () => {
         subjectFingerprint: action.fingerprint,
         policySnapshotJson: action.policySnapshotJson,
         createdAt: Date.now(),
-      })
-      .run();
+      });
 
-    await db.delete(externalActions).where(eq(externalActions.id, action.id)).run();
-    expect(await db.select().from(externalActionDecisions).all()).toEqual([]);
+    await db.delete(externalActions).where(eq(externalActions.id, action.id));
+    expect(await db.select().from(externalActionDecisions)).toEqual([]);
   });
 });

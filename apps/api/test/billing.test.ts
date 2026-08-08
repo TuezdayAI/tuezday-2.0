@@ -12,7 +12,7 @@ describe("billing gating (Task 3)", () => {
   let db: any;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildApp({ db });
   });
 

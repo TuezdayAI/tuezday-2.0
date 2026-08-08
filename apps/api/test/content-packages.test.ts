@@ -81,7 +81,7 @@ describe("content packages (Sprint 62)", () => {
   let userId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: stubLlm });
     const workspace = await app.inject({
       method: "POST",
@@ -138,11 +138,10 @@ describe("content packages (Sprint 62)", () => {
         observedAt: Date.now(),
       });
     });
-    return (await db
+    return ((await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.title, title))
-      .get())!.id;
+      .where(eq(canonicalExternalStories.title, title)))[0])!.id;
   }
 
   async function seedOpportunity(
@@ -151,11 +150,10 @@ describe("content packages (Sprint 62)", () => {
     status: "qualified" | "auto_qualified" | "needs_review" = "qualified",
   ): Promise<string> {
     const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
-    const story = (await db
+    const story = ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, storyId))
-      .get())!;
+      .where(eq(canonicalExternalStories.id, storyId)))[0])!;
     const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
@@ -186,8 +184,7 @@ describe("content packages (Sprint 62)", () => {
         expiresAt: null,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -199,18 +196,16 @@ describe("content packages (Sprint 62)", () => {
       userId,
     });
 
-    const opportunity = (await db
+    const opportunity = ((await db
       .select()
       .from(campaignOpportunities)
-      .where(eq(campaignOpportunities.id, opportunityId))
-      .get())!;
+      .where(eq(campaignOpportunities.id, opportunityId)))[0])!;
     expect(opportunity.status).toBe("package_created");
     expect(opportunity.decidedByUserId).toBe(userId);
     const oppEvents = await db
       .select()
       .from(campaignOpportunityEvents)
-      .where(eq(campaignOpportunityEvents.opportunityId, opportunityId))
-      .all();
+      .where(eq(campaignOpportunityEvents.opportunityId, opportunityId));
     expect(oppEvents.map((e) => [e.fromStatus, e.toStatus])).toContainEqual([
       "qualified",
       "package_created",
@@ -295,8 +290,7 @@ describe("content packages (Sprint 62)", () => {
       .select()
       .from(contentPackageEvents)
       .where(eq(contentPackageEvents.packageId, packageId))
-      .orderBy(asc(contentPackageEvents.createdAt))
-      .all();
+      .orderBy(asc(contentPackageEvents.createdAt));
     expect(events.at(-1)).toMatchObject({
       fromStatus: "assessing",
       toStatus: "cancelled",
@@ -330,8 +324,7 @@ describe("content packages (Sprint 62)", () => {
       { userId },
     );
     await db.delete(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, storyId))
-      .run();
+      .where(eq(canonicalExternalStories.id, storyId));
     const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.canonicalStoryId).toBeNull();
     expect(detail.package.opportunityId).toBeNull();

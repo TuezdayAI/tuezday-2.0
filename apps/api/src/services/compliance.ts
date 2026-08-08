@@ -8,11 +8,10 @@ import { workspaceCompliance } from "../db/schema";
  * outreach sequence can activate, and appended to every send's footer.
  */
 export async function getCompliance(db: Db, workspaceId: string): Promise<WorkspaceCompliance> {
-  const row = await db
+  const row = (await db
     .select()
     .from(workspaceCompliance)
-    .where(eq(workspaceCompliance.workspaceId, workspaceId))
-    .get();
+    .where(eq(workspaceCompliance.workspaceId, workspaceId)))[0];
   if (row) return row;
   const now = Date.now();
   return { workspaceId, postalAddress: "", createdAt: now, updatedAt: now };
@@ -34,7 +33,6 @@ export async function updateCompliance(
     .onConflictDoUpdate({
       target: workspaceCompliance.workspaceId,
       set: { postalAddress: input.postalAddress, updatedAt: now },
-    })
-    .run();
+    });
   return await getCompliance(db, workspaceId);
 }

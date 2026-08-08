@@ -1,5 +1,5 @@
 import { and, eq, gt, lte, sql } from "drizzle-orm";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import { taskLeases, type TaskLeaseRow } from "../db/schema";
 
 export interface LeaseToken {
@@ -28,11 +28,12 @@ function toToken(row: TaskLeaseRow): LeaseToken {
 }
 
 export async function databaseNowMs(db: DbExecutor): Promise<number> {
-  const row = await db.get<{ now: number }>(
+  const { rows } = await db.execute<{ now: number }>(
     sql`SELECT ${DATABASE_NOW_MS} AS now`,
   );
+  const row = rows[0];
   if (!row) throw new Error("database_clock_unavailable");
-  return row.now;
+  return Number(row.now);
 }
 
 export async function claimTaskLease(
@@ -42,7 +43,7 @@ export async function claimTaskLease(
   leaseMs: number,
 ): Promise<LeaseToken | null> {
   return await db.transaction(async (tx) => {
-    const inserted = await tx
+    const inserted = (await tx
       .insert(taskLeases)
       .values({
         key,
@@ -54,11 +55,10 @@ export async function claimTaskLease(
         updatedAt: DATABASE_NOW_MS,
       })
       .onConflictDoNothing({ target: taskLeases.key })
-      .returning()
-      .get();
+      .returning())[0];
     if (inserted) return toToken(inserted);
 
-    const reclaimed = await tx
+    const reclaimed = (await tx
       .update(taskLeases)
       .set({
         owner,
@@ -73,8 +73,7 @@ export async function claimTaskLease(
           lte(taskLeases.expiresAt, DATABASE_NOW_MS),
         ),
       )
-      .returning()
-      .get();
+      .returning())[0];
     return reclaimed ? toToken(reclaimed) : null;
   });
 }
@@ -84,7 +83,7 @@ export async function heartbeatTaskLease(
   token: LeaseToken,
   leaseMs: number,
 ): Promise<LeaseToken | null> {
-  const renewed = await db
+  const renewed = (await db
     .update(taskLeases)
     .set({
       expiresAt: sql`${DATABASE_NOW_MS} + ${leaseMs}`,
@@ -99,8 +98,7 @@ export async function heartbeatTaskLease(
         gt(taskLeases.expiresAt, DATABASE_NOW_MS),
       ),
     )
-    .returning()
-    .get();
+    .returning())[0];
   return renewed ? toToken(renewed) : null;
 }
 
@@ -117,9 +115,8 @@ export async function releaseTaskLease(db: Db, token: LeaseToken): Promise<boole
         eq(taskLeases.owner, token.owner),
         eq(taskLeases.version, token.version),
       ),
-    )
-    .run();
-  return result.changes === 1;
+    );
+  return rowsAffected(result) === 1;
 }
 
 export async function withTaskLease<T>(

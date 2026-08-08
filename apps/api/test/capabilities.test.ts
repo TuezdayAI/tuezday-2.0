@@ -7,7 +7,7 @@ describe("GET /workspaces/:id/capabilities", () => {
   let app: TuezdayApp;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb() });
+    app = await buildAuthedApp({ db: await createTestDb() });
   });
 
   afterEach(async () => {

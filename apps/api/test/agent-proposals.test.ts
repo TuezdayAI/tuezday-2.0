@@ -61,7 +61,7 @@ describe("agent proposals (Sprint 69)", () => {
   let proposals: AgentProposalService;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     posts = [];
     const connectors = fabric(posts);
     app = await buildAuthedApp({ db, connectors });
@@ -79,8 +79,7 @@ describe("agent proposals (Sprint 69)", () => {
         displayName: "Founder Reddit",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     proposals = createAgentProposals({
       db,
       runtime: createExternalActionRuntime({
@@ -113,8 +112,7 @@ describe("agent proposals (Sprint 69)", () => {
         state,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -133,7 +131,7 @@ describe("agent proposals (Sprint 69)", () => {
     expect(draft?.state).toBe("pending_review");
     // A machine-written draft must never look like a human approval — that is
     // what the Sprint 52 publish gate collapses on.
-    const decisions = await db.select().from(agentProposals).all();
+    const decisions = await db.select().from(agentProposals);
     expect(decisions).toHaveLength(1);
     expect(decisions[0]!.rationale).toContain("usage-based pricing");
     // Nothing external exists yet: writing is not sending.
@@ -153,7 +151,7 @@ describe("agent proposals (Sprint 69)", () => {
     // The refusal comes from publishIntent, which was refusing this before an
     // agent existed. No new gate was written for it.
     expect(result.error).toBe("draft_not_approved");
-    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(agentProposals)).toHaveLength(0);
   });
 
   it("parks a publication when the policy tree says human_required (acceptance)", async () => {
@@ -176,7 +174,7 @@ describe("agent proposals (Sprint 69)", () => {
     expect(action.origin).toBe("agent");
     expect(action.originRunId).toBe(RUN_ID);
     // Attributable both ways: the queue names the run, the run lists the action.
-    expect((await db.select().from(agentProposals).all())[0]!.externalActionId).toBe(action.id);
+    expect((await db.select().from(agentProposals))[0]!.externalActionId).toBe(action.id);
   });
 
   it("lets an autonomous policy dispatch it, exactly as for a person (D-69.1)", async () => {
@@ -192,7 +190,7 @@ describe("agent proposals (Sprint 69)", () => {
     if (!result.ok) return;
     expect(result.status).toBe("succeeded");
     expect(posts).toHaveLength(1);
-    expect(await db.select().from(publications).all()).toHaveLength(1);
+    expect(await db.select().from(publications)).toHaveLength(1);
   });
 
   it("resolves the destination from history and says what to pass when it cannot", async () => {
@@ -223,8 +221,7 @@ describe("agent proposals (Sprint 69)", () => {
         scheduledFor: Date.now() - 1000,
         createdAt: Date.now() - 1000,
         updatedAt: Date.now() - 1000,
-      })
-      .run();
+      });
     const resolved = await proposals.proposePublication(origin(), {
       draftId,
       connectionId,
@@ -280,8 +277,7 @@ describe("agent proposals (Sprint 69)", () => {
           summary: "Earlier proposal",
           rationale: "Earlier",
           createdAt: now - i * 1000,
-        })
-        .run();
+        });
     }
     expect(await countProposalsToday(db, workspaceId)).toBe(AGENT_PROPOSALS_PER_DAY);
 
@@ -294,7 +290,7 @@ describe("agent proposals (Sprint 69)", () => {
     if (result.ok) return;
     expect(result.error).toBe("proposal_cap_reached");
     // Nothing was written, not even the draft that would have been "harmless".
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
   });
 
   it("counts only the trailing day, so yesterday's proposals do not block today", async () => {
@@ -310,8 +306,7 @@ describe("agent proposals (Sprint 69)", () => {
         summary: "Two days ago",
         rationale: "Old",
         createdAt: Date.now() - 48 * 60 * 60 * 1000,
-      })
-      .run();
+      });
     expect(await countProposalsToday(db, workspaceId)).toBe(0);
   });
 
@@ -325,7 +320,7 @@ describe("agent proposals (Sprint 69)", () => {
     if (!result.ok) return;
     expect(result.simulated).toBe(true);
     expect(result.id).toBeNull();
-    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(agentProposals)).toHaveLength(0);
     expect(posts).toHaveLength(0);
   });
 });

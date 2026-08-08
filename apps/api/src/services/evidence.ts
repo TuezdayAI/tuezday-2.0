@@ -35,8 +35,7 @@ export async function listEvidence(db: Db, workspaceId: string): Promise<Evidenc
     .select()
     .from(evidenceDocuments)
     .where(eq(evidenceDocuments.workspaceId, workspaceId))
-    .orderBy(desc(evidenceDocuments.createdAt))
-    .all())
+    .orderBy(desc(evidenceDocuments.createdAt)))
     .map(rowToDocument);
 }
 
@@ -45,11 +44,10 @@ export async function getEvidenceDocument(
   workspaceId: string,
   documentId: string,
 ): Promise<EvidenceDocument | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(evidenceDocuments)
-    .where(and(eq(evidenceDocuments.workspaceId, workspaceId), eq(evidenceDocuments.id, documentId)))
-    .get();
+    .where(and(eq(evidenceDocuments.workspaceId, workspaceId), eq(evidenceDocuments.id, documentId))))[0];
   return row ? rowToDocument(row) : undefined;
 }
 
@@ -70,24 +68,21 @@ export async function ensureWorkspaceCollection(
   store: EvidenceStore,
   workspaceId: string,
 ): Promise<string> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(evidenceCollections)
-    .where(eq(evidenceCollections.workspaceId, workspaceId))
-    .get();
+    .where(eq(evidenceCollections.workspaceId, workspaceId)))[0];
   if (existing) return existing.r2rCollectionId;
 
   const r2rCollectionId = await store.createCollection(workspaceId);
   await db.insert(evidenceCollections)
     .values({ workspaceId, r2rCollectionId, createdAt: Date.now() })
-    .onConflictDoNothing()
-    .run();
+    .onConflictDoNothing();
   // Re-read in case a concurrent request won the insert race.
-  const row = await db
+  const row = (await db
     .select()
     .from(evidenceCollections)
-    .where(eq(evidenceCollections.workspaceId, workspaceId))
-    .get();
+    .where(eq(evidenceCollections.workspaceId, workspaceId)))[0];
   return row?.r2rCollectionId ?? r2rCollectionId;
 }
 
@@ -111,7 +106,7 @@ export async function addEvidence(
     sourceCreatedAt: provenance?.sourceCreatedAt ?? null,
     createdAt: Date.now(),
   };
-  await db.insert(evidenceDocuments).values(row).run();
+  await db.insert(evidenceDocuments).values(row);
 
   try {
     const collectionId = await ensureWorkspaceCollection(db, store, workspaceId);
@@ -123,15 +118,13 @@ export async function addEvidence(
     });
     await db.update(evidenceDocuments)
       .set({ r2rDocumentId, status: "ready" })
-      .where(eq(evidenceDocuments.id, row.id))
-      .run();
+      .where(eq(evidenceDocuments.id, row.id));
     return { ...rowToDocument(row), r2rDocumentId, status: "ready" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db.update(evidenceDocuments)
       .set({ status: "failed", error: message.slice(0, 500) })
-      .where(eq(evidenceDocuments.id, row.id))
-      .run();
+      .where(eq(evidenceDocuments.id, row.id));
     return { ...rowToDocument(row), status: "failed", error: message.slice(0, 500) };
   }
 }
@@ -150,7 +143,7 @@ export async function deleteEvidence(
       // retrieval only surfaces chunks from documents we still track.
     }
   }
-  await db.delete(evidenceDocuments).where(eq(evidenceDocuments.id, document.id)).run();
+  await db.delete(evidenceDocuments).where(eq(evidenceDocuments.id, document.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -374,8 +367,7 @@ export async function listCandidates(
     .where(
       and(eq(evidenceCandidates.workspaceId, workspaceId), eq(evidenceCandidates.status, status)),
     )
-    .orderBy(desc(evidenceCandidates.createdAt))
-    .all())
+    .orderBy(desc(evidenceCandidates.createdAt)))
     .map(rowToCandidate);
 }
 
@@ -384,13 +376,12 @@ export async function getCandidate(
   workspaceId: string,
   candidateId: string,
 ): Promise<EvidenceCandidate | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(evidenceCandidates)
     .where(
       and(eq(evidenceCandidates.workspaceId, workspaceId), eq(evidenceCandidates.id, candidateId)),
-    )
-    .get();
+    ))[0];
   return row ? rowToCandidate(row) : undefined;
 }
 
@@ -410,15 +401,14 @@ export async function sweepEvidenceCandidates(db: Db, workspaceId: string): Prom
     (await db
       .select({ kind: evidenceCandidates.kind, sourceRef: evidenceCandidates.sourceRef })
       .from(evidenceCandidates)
-      .where(eq(evidenceCandidates.workspaceId, workspaceId))
-      .all())
+      .where(eq(evidenceCandidates.workspaceId, workspaceId)))
       .map((r) => `${r.kind}:${r.sourceRef}`),
   );
   const now = Date.now();
   let signalProposed = 0;
   let publishedProposed = 0;
 
-  for (const s of await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all()) {
+  for (const s of await db.select().from(signals).where(eq(signals.workspaceId, workspaceId))) {
     if (seen.has(`signal:${s.id}`)) continue;
     const date = new Date(s.createdAt).toISOString().slice(0, 10);
     await db.insert(evidenceCandidates)
@@ -432,8 +422,7 @@ export async function sweepEvidenceCandidates(db: Db, workspaceId: string): Prom
         sourceCreatedAt: s.createdAt,
         createdAt: now,
       })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
     signalProposed++;
   }
 
@@ -447,8 +436,7 @@ export async function sweepEvidenceCandidates(db: Db, workspaceId: string): Prom
     })
     .from(publications)
     .innerJoin(drafts, eq(publications.draftId, drafts.id))
-    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.status, "published")))
-    .all();
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.status, "published")));
   for (const p of publishedRows) {
     if (seen.has(`published:${p.id}`)) continue;
     await db.insert(evidenceCandidates)
@@ -462,8 +450,7 @@ export async function sweepEvidenceCandidates(db: Db, workspaceId: string): Prom
         sourceCreatedAt: p.publishedAt ?? p.scheduledFor,
         createdAt: now,
       })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
     publishedProposed++;
   }
 
@@ -495,8 +482,7 @@ export async function acceptCandidate(
   if (document.status === "ready") {
     await db.update(evidenceCandidates)
       .set({ status: "accepted", evidenceDocumentId: document.id, decidedAt: Date.now() })
-      .where(eq(evidenceCandidates.id, candidate.id))
-      .run();
+      .where(eq(evidenceCandidates.id, candidate.id));
   }
   return document;
 }
@@ -504,8 +490,7 @@ export async function acceptCandidate(
 export async function dismissCandidate(db: Db, candidate: EvidenceCandidate): Promise<void> {
   await db.update(evidenceCandidates)
     .set({ status: "dismissed", decidedAt: Date.now() })
-    .where(eq(evidenceCandidates.id, candidate.id))
-    .run();
+    .where(eq(evidenceCandidates.id, candidate.id));
 }
 
 /**
@@ -518,8 +503,7 @@ export async function backfillCollections(db: Db, store: EvidenceStore): Promise
   const ready = (await db
     .select()
     .from(evidenceDocuments)
-    .where(eq(evidenceDocuments.status, "ready"))
-    .all())
+    .where(eq(evidenceDocuments.status, "ready")))
     .filter((d) => d.r2rDocumentId);
 
   const byWorkspace = new Map<string, EvidenceDocumentRow[]>();

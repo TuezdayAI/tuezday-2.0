@@ -38,9 +38,9 @@ export async function prepareOutboundDraftEmailAction(
   draftId: string,
   mailboxId?: string,
 ): Promise<ExternalActionCommand> {
-  const draft = await db.select().from(drafts).where(
+  const draft = (await db.select().from(drafts).where(
     and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
-  ).get();
+  ))[0];
   if (!draft) throw new OutboundDraftEmailError("draft_not_found", "Outbound draft not found.");
   if (draft.state !== "approved") {
     throw new OutboundDraftEmailError("draft_not_approved", "Approve this draft before sending it.");
@@ -87,7 +87,7 @@ export async function createLead(db: Db, workspaceId: string, input: CreateLeadI
     xHandle: input.xHandle,
     createdAt: Date.now(),
   };
-  await db.insert(leads).values(row).run();
+  await db.insert(leads).values(row);
   return row;
 }
 
@@ -102,7 +102,7 @@ export async function updateLead(
   const patch: Partial<LeadRow> = { ...input };
   if (input.email !== undefined) patch.email = input.email.toLowerCase();
   if (Object.keys(patch).length > 0) {
-    await db.update(leads).set(patch).where(eq(leads.id, leadId)).run();
+    await db.update(leads).set(patch).where(eq(leads.id, leadId));
   }
   return await getLead(db, workspaceId, leadId);
 }
@@ -112,22 +112,20 @@ export async function listLeads(db: Db, workspaceId: string): Promise<Lead[]> {
     .select()
     .from(leads)
     .where(eq(leads.workspaceId, workspaceId))
-    .orderBy(desc(leads.createdAt))
-    .all();
+    .orderBy(desc(leads.createdAt));
 }
 
 export async function getLead(db: Db, workspaceId: string, leadId: string): Promise<Lead | undefined> {
-  return await db
+  return (await db
     .select()
     .from(leads)
-    .where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, leadId)))
-    .get();
+    .where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, leadId))))[0];
 }
 
 export async function deleteLead(db: Db, workspaceId: string, leadId: string): Promise<boolean> {
   if (!await getLead(db, workspaceId, leadId)) return false;
   await removeLeadFromAudiences(db, workspaceId, leadId);
-  await db.delete(leads).where(eq(leads.id, leadId)).run();
+  await db.delete(leads).where(eq(leads.id, leadId));
   return true;
 }
 

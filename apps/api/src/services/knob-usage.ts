@@ -109,7 +109,7 @@ export interface KnobConfiguration {
  * report can replay 200 bundles without re-querying six tables 200 times.
  */
 export async function readKnobConfiguration(db: Db, workspaceId: string): Promise<KnobConfiguration> {
-  const written = await db
+  const written = (await db
     .select({
       count: sql<number>`count(*)`,
       lastAt: sql<number | null>`max(${brainDocuments.updatedAt})`,
@@ -120,8 +120,7 @@ export async function readKnobConfiguration(db: Db, workspaceId: string): Promis
         eq(brainDocuments.workspaceId, workspaceId),
         sql`trim(${brainDocuments.content}) <> ''`,
       ),
-    )
-    .get();
+    ))[0];
 
   const guidance = await db
     .select({
@@ -130,25 +129,22 @@ export async function readKnobConfiguration(db: Db, workspaceId: string): Promis
       updatedAt: guidanceOverrides.updatedAt,
     })
     .from(guidanceOverrides)
-    .where(eq(guidanceOverrides.workspaceId, workspaceId))
-    .all();
+    .where(eq(guidanceOverrides.workspaceId, workspaceId));
   const unscoped = guidance.filter((row) => !row.scoped && !row.campaignId);
   const scoped = guidance.filter((row) => row.scoped || row.campaignId);
 
-  const matrix = await db
+  const matrix = (await db
     .select({
       count: sql<number>`count(*)`,
       lastAt: sql<number | null>`max(${contextMatrixOverrides.updatedAt})`,
     })
     .from(contextMatrixOverrides)
-    .where(eq(contextMatrixOverrides.workspaceId, workspaceId))
-    .get();
+    .where(eq(contextMatrixOverrides.workspaceId, workspaceId)))[0];
 
-  const settings = await db
+  const settings = (await db
     .select()
     .from(generationSettings)
-    .where(eq(generationSettings.workspaceId, workspaceId))
-    .get();
+    .where(eq(generationSettings.workspaceId, workspaceId)))[0];
   // A row that matches the shipped defaults is not a knob anybody turned.
   const settingsTouched =
     settings !== undefined &&
@@ -157,14 +153,13 @@ export async function readKnobConfiguration(db: Db, workspaceId: string): Promis
       settings.angleCount !== 3 ||
       settings.flagThreshold !== 70);
 
-  const overlays = await db
+  const overlays = (await db
     .select({
       count: sql<number>`count(*)`,
       lastAt: sql<number | null>`max(${designOverlays.updatedAt})`,
     })
     .from(designOverlays)
-    .where(eq(designOverlays.workspaceId, workspaceId))
-    .get();
+    .where(eq(designOverlays.workspaceId, workspaceId)))[0];
 
   const latest = (rows: { updatedAt: number }[]): number | null =>
     rows.length === 0 ? null : Math.max(...rows.map((row) => row.updatedAt));
@@ -363,8 +358,7 @@ export async function buildKnobUsageReport(
     .from(generations)
     .where(eq(generations.workspaceId, workspaceId))
     .orderBy(desc(generations.createdAt))
-    .limit(sampleLimit)
-    .all();
+    .limit(sampleLimit);
 
   const appliedCounts = new Map<ContextKnobKey, number>();
   let sampled = 0;

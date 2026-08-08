@@ -414,7 +414,7 @@ describe("CRM read/write API", () => {
     ]);
     received = [];
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),
       fetcher: webhookFetcher(received),

@@ -34,7 +34,7 @@ describe("draft editor context API", () => {
   let campaignOnlyId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeLlm });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Editor" } })
@@ -76,12 +76,10 @@ describe("draft editor context API", () => {
         createdBy: null,
         createdAt: 180,
         activatedAt: 200,
-      })
-      .run();
+      });
     await db.update(campaigns)
       .set({ currentPlanRevisionId: planId })
-      .where(eq(campaigns.id, campaign.id))
-      .run();
+      .where(eq(campaigns.id, campaign.id));
 
     const generationId = randomUUID();
     await db.insert(generations)
@@ -139,8 +137,7 @@ describe("draft editor context API", () => {
         ratedAt: null,
         reviewJson: null,
         createdAt: 100,
-      })
-      .run();
+      });
 
     const signalId = randomUUID();
     draftId = randomUUID();
@@ -168,8 +165,7 @@ describe("draft editor context API", () => {
         sourceSignalId: signalId,
         taskType: "linkedin_post",
         channel: "linkedin",
-      })
-      .run();
+      });
     await db.insert(drafts)
       .values({
         ...baseDraft,
@@ -178,8 +174,7 @@ describe("draft editor context API", () => {
         sourceSignalId: signalId,
         taskType: "cold_email_opener",
         channel: "email",
-      })
-      .run();
+      });
     await db.insert(drafts)
       .values({
         ...baseDraft,
@@ -188,8 +183,7 @@ describe("draft editor context API", () => {
         sourceSignalId: randomUUID(),
         taskType: "instagram_caption",
         channel: "instagram",
-      })
-      .run();
+      });
 
     await db.insert(evidenceDocuments)
       .values({
@@ -204,8 +198,7 @@ describe("draft editor context API", () => {
         sourceRef: "https://example.com/proof",
         sourceCreatedAt: 90,
         createdAt: 90,
-      })
-      .run();
+      });
 
     const connectionId = randomUUID();
     await db.insert(connections)
@@ -226,8 +219,7 @@ describe("draft editor context API", () => {
         contentProfileJson: "{}",
         createdAt: 80,
         updatedAt: 80,
-      })
-      .run();
+      });
     await db.insert(publications)
       .values({
         id: randomUUID(),
@@ -247,8 +239,7 @@ describe("draft editor context API", () => {
         lastError: null,
         createdAt: 300,
         updatedAt: 310,
-      })
-      .run();
+      });
   });
 
   afterEach(async () => {

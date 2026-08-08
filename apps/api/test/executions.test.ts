@@ -42,7 +42,7 @@ describe("unified execution results", () => {
   let connectionId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeLlm });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Executor" } })
@@ -63,8 +63,7 @@ describe("unified execution results", () => {
         nangoConnectionId: `nango-${connectionId}`,
         createdAt: T0,
         updatedAt: T0,
-      })
-      .run();
+      });
   });
 
   afterEach(async () => {
@@ -183,8 +182,7 @@ describe("unified execution results", () => {
         completedAt: over.at,
         updatedAt: over.at,
       })
-      .where(eq(externalActions.id, id))
-      .run();
+      .where(eq(externalActions.id, id));
     return id;
   }
 
@@ -212,7 +210,7 @@ describe("unified execution results", () => {
       lastError: status === "bounced" ? "Recipient bounced" : null,
       createdAt: T0,
       updatedAt: status === "accepted" ? T0 : T0 + HOUR,
-    }).run();
+    });
     return { id, actionId };
   }
 
@@ -243,8 +241,7 @@ describe("unified execution results", () => {
         lastError: over.lastError ?? null,
         createdAt: over.at - HOUR,
         updatedAt: over.at,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -269,8 +266,7 @@ describe("unified execution results", () => {
         status: "completed",
         createdAt: over.at - HOUR,
         updatedAt: over.at,
-      })
-      .run();
+      });
     for (const [index, message] of over.messages.entries()) {
       await db.insert(launchMessages)
         .values({
@@ -287,8 +283,7 @@ describe("unified execution results", () => {
           lastError: message.lastError ?? null,
           createdAt: over.at - HOUR,
           updatedAt: over.at,
-        })
-        .run();
+        });
     }
     return id;
   }
@@ -309,8 +304,7 @@ describe("unified execution results", () => {
         externalId: `act_${adAccountId}`,
         name: "Main account",
         createdAt: T0,
-      })
-      .run();
+      });
     const id = randomUUID();
     await db.insert(adLaunches)
       .values({
@@ -334,8 +328,7 @@ describe("unified execution results", () => {
         externalActionId: over.externalActionId ?? null,
         createdAt: over.at - HOUR,
         updatedAt: over.at,
-      })
-      .run();
+      });
     return id;
   }
 

@@ -66,7 +66,7 @@ describe("workspace email sender domains", () => {
 
   beforeEach(async () => {
     provider = new FakeOutboundEmailProvider();
-    app = await buildAuthedApp({ db: createTestDb(), outboundEmail: provider });
+    app = await buildAuthedApp({ db: await createTestDb(), outboundEmail: provider });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Acme" } })
     ).json().id;

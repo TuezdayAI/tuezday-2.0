@@ -35,7 +35,7 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
   let designSystemId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     workspaceId = (await createWorkspace(db, { name: "Design Co" })).id;
     designSystemId = (await ensureDefaultDesignSystem(db, workspaceId)).id;
   });

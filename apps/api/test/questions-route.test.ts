@@ -77,7 +77,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
   let gateway: ScriptedGateway;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     gateway = new ScriptedGateway([
       {
         toolCalls: [
@@ -120,8 +120,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
         status: "open",
         createdAt: 1,
         ...overrides,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -228,8 +227,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
         source: "manual",
         sourceUrl: null,
         createdAt: 1,
-      })
-      .run();
+      });
     const run = await startPipelineRun(db, {
       workspaceId,
       definition,

@@ -145,8 +145,7 @@ export async function setGenerationReview(
 ): Promise<void> {
   await db.update(generations)
     .set({ reviewJson: JSON.stringify(review) })
-    .where(and(eq(generations.workspaceId, workspaceId), eq(generations.id, generationId)))
-    .run();
+    .where(and(eq(generations.workspaceId, workspaceId), eq(generations.id, generationId)));
 }
 
 export async function setDraftReview(
@@ -157,6 +156,5 @@ export async function setDraftReview(
 ): Promise<void> {
   await db.update(drafts)
     .set({ reviewJson: JSON.stringify(review) })
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
-    .run();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)));
 }

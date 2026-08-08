@@ -35,11 +35,10 @@ function toDesignSystem(row: DesignSystemRow): DesignSystem {
  * pre-existing workspaces get one on first touch.
  */
 export async function ensureDefaultDesignSystem(db: Db, workspaceId: string): Promise<DesignSystem> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(designSystems)
-    .where(and(eq(designSystems.workspaceId, workspaceId), eq(designSystems.isDefault, 1)))
-    .get();
+    .where(and(eq(designSystems.workspaceId, workspaceId), eq(designSystems.isDefault, 1))))[0];
   if (existing) return toDesignSystem(existing);
 
   const now = Date.now();
@@ -52,7 +51,7 @@ export async function ensureDefaultDesignSystem(db: Db, workspaceId: string): Pr
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(designSystems).values(row).run();
+  await db.insert(designSystems).values(row);
   return toDesignSystem(row);
 }
 
@@ -62,17 +61,15 @@ export async function listDesignSystems(db: Db, workspaceId: string): Promise<De
     .select()
     .from(designSystems)
     .where(eq(designSystems.workspaceId, workspaceId))
-    .orderBy(designSystems.createdAt)
-    .all())
+    .orderBy(designSystems.createdAt))
     .map(toDesignSystem);
 }
 
 export async function getDesignSystem(db: Db, workspaceId: string, id: string): Promise<DesignSystem | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(designSystems)
-    .where(and(eq(designSystems.workspaceId, workspaceId), eq(designSystems.id, id)))
-    .get();
+    .where(and(eq(designSystems.workspaceId, workspaceId), eq(designSystems.id, id))))[0];
   return row ? toDesignSystem(row) : undefined;
 }
 
@@ -96,7 +93,7 @@ export async function createDesignSystem(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(designSystems).values(row).run(); // (workspaceId, name) unique index rejects dupes
+  await db.insert(designSystems).values(row); // (workspaceId, name) unique index rejects dupes
   return toDesignSystem(row);
 }
 
@@ -106,9 +103,8 @@ export async function setDefaultDesignSystem(db: Db, workspaceId: string, id: st
   if (!target) throw new Error(`design system ${id} not found in workspace ${workspaceId}`);
   await db.update(designSystems)
     .set({ isDefault: 0 })
-    .where(eq(designSystems.workspaceId, workspaceId))
-    .run();
-  await db.update(designSystems).set({ isDefault: 1 }).where(eq(designSystems.id, id)).run();
+    .where(eq(designSystems.workspaceId, workspaceId));
+  await db.update(designSystems).set({ isDefault: 1 }).where(eq(designSystems.id, id));
   return { ...target, isDefault: true };
 }
 
@@ -126,8 +122,7 @@ export async function updateDesignSystem(
   const now = Date.now();
   await db.update(designSystems)
     .set({ content, updatedAt: now })
-    .where(eq(designSystems.id, system.id))
-    .run();
+    .where(eq(designSystems.id, system.id));
   return { ...system, content, updatedAt: now };
 }
 
@@ -145,8 +140,7 @@ export async function listDesignOverlays(
     .leftJoin(personas, eq(designOverlays.personaId, personas.id))
     .leftJoin(campaigns, eq(designOverlays.campaignId, campaigns.id))
     .where(and(...conditions))
-    .orderBy(designOverlays.channel, designOverlays.updatedAt)
-    .all())
+    .orderBy(designOverlays.channel, designOverlays.updatedAt))
     .map(({ row, personaName, campaignName }) => ({
       id: row.id,
       designSystemId: row.designSystemId,
@@ -192,19 +186,17 @@ export async function upsertDesignOverlay(
   const now = Date.now();
   const personaId = input.personaId ?? null;
   const campaignId = input.campaignId ?? null;
-  const existing = await db
+  const existing = (await db
     .select({ id: designOverlays.id })
     .from(designOverlays)
-    .where(exactScopeWhere(system.id, input.channel, input))
-    .get();
+    .where(exactScopeWhere(system.id, input.channel, input)))[0];
 
   let id: string;
   if (existing) {
     id = existing.id;
     await db.update(designOverlays)
       .set({ content: input.content, updatedAt: now })
-      .where(eq(designOverlays.id, id))
-      .run();
+      .where(eq(designOverlays.id, id));
   } else {
     id = randomUUID();
     await db.insert(designOverlays)
@@ -218,8 +210,7 @@ export async function upsertDesignOverlay(
         content: input.content,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
   }
 
   return {
@@ -237,13 +228,12 @@ export async function upsertDesignOverlay(
 
 /** Delete one overlay by id; false when it doesn't exist in this workspace. */
 export async function deleteDesignOverlay(db: Db, workspaceId: string, overlayId: string): Promise<boolean> {
-  const existing = await db
+  const existing = (await db
     .select({ id: designOverlays.id })
     .from(designOverlays)
-    .where(and(eq(designOverlays.workspaceId, workspaceId), eq(designOverlays.id, overlayId)))
-    .get();
+    .where(and(eq(designOverlays.workspaceId, workspaceId), eq(designOverlays.id, overlayId))))[0];
   if (!existing) return false;
-  await db.delete(designOverlays).where(eq(designOverlays.id, overlayId)).run();
+  await db.delete(designOverlays).where(eq(designOverlays.id, overlayId));
   return true;
 }
 
@@ -277,8 +267,7 @@ export async function resolveDesignSystem(
         eq(designOverlays.designSystemId, system.id),
         eq(designOverlays.channel, input.channel),
       ),
-    )
-    .all();
+    );
 
   const personaId = input.personaId ?? null;
   const campaignId = input.campaignId ?? null;

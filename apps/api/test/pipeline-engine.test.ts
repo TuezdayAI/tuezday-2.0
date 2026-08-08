@@ -41,10 +41,9 @@ const SIGNAL_2_ID = "22222222-2222-4222-8222-222222222222";
 const ACTOR = { userId: null, label: "founder" };
 
 async function fixture(script: ScriptedStep[]) {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Engine", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Engine", createdAt: 1, updatedAt: 1 });
   await db.insert(signals)
     .values([
       {
@@ -63,8 +62,7 @@ async function fixture(script: ScriptedStep[]) {
         sourceUrl: null,
         createdAt: 1,
       },
-    ])
-    .run();
+    ]);
   const gateway = new ScriptedGateway(script);
   const deps: PipelineEngineDeps = {
     llm: gateway,
@@ -193,7 +191,7 @@ describe("pipeline engine", () => {
     ]);
 
     // Gate handoff (D-64.4/5): a pending_review draft + an honest generation trace.
-    const draftRows = await db.select().from(drafts).all();
+    const draftRows = await db.select().from(drafts);
     expect(draftRows).toHaveLength(1);
     expect(draftRows[0]).toMatchObject({
       state: "pending_review",
@@ -202,7 +200,7 @@ describe("pipeline engine", () => {
       sourceSignalId: SIGNAL_ID,
       content: "Funding follows pain. Here's what buyers actually want.",
     });
-    const generationRows = await db.select().from(generations).all();
+    const generationRows = await db.select().from(generations);
     expect(generationRows).toHaveLength(1);
     const sections = JSON.parse(generationRows[0]!.sectionsJson) as { key: string }[];
     expect(sections.map((section) => section.key)).toEqual(
@@ -214,7 +212,7 @@ describe("pipeline engine", () => {
     expect(outcome.run.inputTokens).toBeGreaterThan(0);
 
     // Every agent step is an inspectable agent_run labelled pipeline:<step>.
-    const agentTasks = (await db.select().from(agentRuns).all()).map((row) => row.task);
+    const agentTasks = (await db.select().from(agentRuns)).map((row) => row.task);
     expect(agentTasks).toEqual([
       "pipeline:research",
       "pipeline:angle",
@@ -262,7 +260,7 @@ describe("pipeline engine", () => {
     expect(paused.run.status).toBe("escalated");
     expect(paused.run.pausedAtStepKey).toBe("draft");
     expect(paused.run.escalationReason).toContain("low_confidence:draft");
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
 
     const resumed = await decidePipelineRun(db, deps, WORKSPACE_ID, run.id, {
       action: "resume",
@@ -272,7 +270,7 @@ describe("pipeline engine", () => {
     expect(resumed.run.escalationReason).toBeNull();
     // The draft step was replayed from cache, not re-executed.
     expect(gateway.calls).toHaveLength(2);
-    expect(await db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(drafts)).toHaveLength(1);
   });
 
   it("escalates on guardrail uncertainty and honours cancel", async () => {
@@ -318,7 +316,7 @@ describe("pipeline engine", () => {
       "2:failed",
     ]);
     expect(detail.steps.every((step) => step.failureReason === "invalid_output")).toBe(true);
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
   });
 
   it("recovers when the retry produces a valid output", async () => {
@@ -350,7 +348,7 @@ describe("pipeline engine", () => {
 
     expect(outcome.run.status).toBe("failed");
     expect(outcome.run.failureReason).toBe("budget_exhausted");
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
   });
 
   it("dedupes runs by idempotency key", async () => {
@@ -379,8 +377,7 @@ describe("pipeline engine", () => {
     const toolRows = await db
       .select()
       .from(agentRunSteps)
-      .where(eq(agentRunSteps.kind, "tool_call"))
-      .all();
+      .where(eq(agentRunSteps.kind, "tool_call"));
     expect(toolRows).toHaveLength(1);
     expect(toolRows[0]!.toolError).toContain('Unknown tool "search_evidence"');
   });
@@ -407,8 +404,8 @@ describe("pipeline engine", () => {
       expect(entry.status).toBe("succeeded");
       expect(entry.proposal).toMatchObject({ simulated: true, draftId: null });
     }
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
-    expect(await db.select().from(generations).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
+    expect(await db.select().from(generations)).toHaveLength(0);
 
     const stored = await listPipelineRuns(db, WORKSPACE_ID, { mode: "dry_run" });
     expect(stored.total).toBe(2);
@@ -449,7 +446,7 @@ describe("pipeline engine", () => {
     expect(secondOutcome.run.result).toMatchObject({ content: "Post v2" });
 
     // The first run stays pinned to the version it executed.
-    const rows = await db.select().from(pipelineRuns).all();
+    const rows = await db.select().from(pipelineRuns);
     expect(rows.map((row) => row.definitionVersion).sort()).toEqual([1, 2]);
   });
 });

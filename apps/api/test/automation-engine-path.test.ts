@@ -123,10 +123,9 @@ const cleanRun = (content = "Engine draft."): ScriptedStep[] => [
 ];
 
 async function fixture(script: ScriptedStep[], automationMode = "human_in_the_loop") {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "AB", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "AB", createdAt: 1, updatedAt: 1 });
   await db.insert(campaigns)
     .values({
       id: CAMPAIGN_ID,
@@ -137,8 +136,7 @@ async function fixture(script: ScriptedStep[], automationMode = "human_in_the_lo
       automationMode,
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(signals)
     .values({
       id: SIGNAL_ID,
@@ -147,8 +145,7 @@ async function fixture(script: ScriptedStep[], automationMode = "human_in_the_lo
       source: "manual",
       sourceUrl: null,
       createdAt: 2,
-    })
-    .run();
+    });
   await insertSignalMatch(db, WORKSPACE_ID, SIGNAL_ID, {
     personaId: null,
     campaignId: CAMPAIGN_ID,
@@ -183,8 +180,7 @@ async function allRuns(db: Db) {
   return await db
     .select()
     .from(pipelineRuns)
-    .where(eq(pipelineRuns.workspaceId, WORKSPACE_ID))
-    .all();
+    .where(eq(pipelineRuns.workspaceId, WORKSPACE_ID));
 }
 
 describe("automation on the pipeline path (D-65.1/D-65.3)", () => {
@@ -284,8 +280,7 @@ describe("automation on the shadow path (D-65.7)", () => {
     const pairs = await db
       .select()
       .from(pipelineShadowPairs)
-      .where(eq(pipelineShadowPairs.workspaceId, WORKSPACE_ID))
-      .all();
+      .where(eq(pipelineShadowPairs.workspaceId, WORKSPACE_ID));
     expect(pairs).toHaveLength(1);
     expect(pairs[0]).toMatchObject({ draftId: draft!.id, runId: runs[0]!.id });
 
@@ -309,8 +304,7 @@ describe("the pipelines tick (D-65.3/D-65.4)", () => {
         name: "Other",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
 
     expect(
       await runPipelinesTick(db, deps, { workspaceId: otherWorkspaceId }),
@@ -409,10 +403,9 @@ describe("the pipelines tick (D-65.3/D-65.4)", () => {
 
 describe("settings", () => {
   it("persists generationPath and defaults to legacy", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "AB", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "AB", createdAt: 1, updatedAt: 1 });
     expect((await getSocialAutomationSettings(db, WORKSPACE_ID)).generationPath).toBe("legacy");
     await updateSocialAutomationSettings(db, WORKSPACE_ID, { generationPath: "shadow" });
     expect((await getSocialAutomationSettings(db, WORKSPACE_ID)).generationPath).toBe("shadow");

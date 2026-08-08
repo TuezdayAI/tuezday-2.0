@@ -216,13 +216,11 @@ export async function replaceItemMatches(
         eq(discoveredItemMatches.workspaceId, workspaceId),
         eq(discoveredItemMatches.itemId, itemId),
       ),
-    )
-    .run();
+    );
   const now = Date.now();
   for (const match of matches) {
     await db.insert(discoveredItemMatches)
-      .values({ id: randomUUID(), workspaceId, itemId, ...match, createdAt: now })
-      .run();
+      .values({ id: randomUUID(), workspaceId, itemId, ...match, createdAt: now });
   }
 }
 
@@ -242,8 +240,7 @@ export async function insertSignalMatch(
       score: match.score,
       reason: match.reason,
       createdAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 type ContractMatch = {
@@ -307,8 +304,7 @@ export async function listItemMatchesForItems(
         inArray(discoveredItemMatches.itemId, itemIds),
       ),
     )
-    .orderBy(desc(discoveredItemMatches.score), asc(discoveredItemMatches.createdAt))
-    .all();
+    .orderBy(desc(discoveredItemMatches.score), asc(discoveredItemMatches.createdAt));
   for (const {
     itemId,
     rawPersonaId,
@@ -377,8 +373,7 @@ export async function listSignalMatchesForSignals(
         inArray(signalMatches.signalId, signalIds),
       ),
     )
-    .orderBy(desc(signalMatches.score), asc(signalMatches.createdAt))
-    .all();
+    .orderBy(desc(signalMatches.score), asc(signalMatches.createdAt));
   for (const {
     signalId,
     rawPersonaId,
@@ -421,8 +416,7 @@ export async function revalidateSignalMatches(
     (await db
       .select({ id: personas.id })
       .from(personas)
-      .where(eq(personas.workspaceId, workspaceId))
-      .all())
+      .where(eq(personas.workspaceId, workspaceId)))
       .map((row) => row.id),
   );
   const currentCampaignPersonaIds = new Map(
@@ -437,8 +431,7 @@ export async function revalidateSignalMatches(
           eq(campaigns.workspaceId, workspaceId),
           eq(campaigns.status, "active"),
         ),
-      )
-      .all())
+      ))
       .map((row) => [
         row.id,
         new Set(JSON.parse(row.personaIdsJson) as string[]),
@@ -479,12 +472,11 @@ export async function getBestSignalMatchForCampaign(
   signalId: string,
   campaignId: string,
 ): Promise<SignalMatchRow | undefined> {
-  const signalExists = await db
+  const signalExists = (await db
     .select({ id: signals.id })
     .from(signals)
-    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
-    .get();
-  const campaignExists = await db
+    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId))))[0];
+  const campaignExists = (await db
     .select({ id: campaigns.id })
     .from(campaigns)
     .where(
@@ -492,8 +484,7 @@ export async function getBestSignalMatchForCampaign(
         eq(campaigns.workspaceId, workspaceId),
         eq(campaigns.id, campaignId),
       ),
-    )
-    .get();
+    ))[0];
   if (!signalExists || !campaignExists) return undefined;
 
   const matches = await db
@@ -506,8 +497,7 @@ export async function getBestSignalMatchForCampaign(
         eq(signalMatches.campaignId, campaignId),
       ),
     )
-    .orderBy(desc(signalMatches.score))
-    .all();
+    .orderBy(desc(signalMatches.score));
   if (matches.length === 0) return undefined;
   const personaIds = [
     ...new Set(
@@ -524,8 +514,7 @@ export async function getBestSignalMatchForCampaign(
               eq(personas.workspaceId, workspaceId),
               inArray(personas.id, personaIds),
             ),
-          )
-          .all())
+          ))
           .map((row) => row.id)
       : [],
   );

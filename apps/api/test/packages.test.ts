@@ -87,7 +87,7 @@ describe("package routes (Sprint 62)", () => {
   let personaId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: sufficiencyGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Routes" } })
@@ -136,11 +136,10 @@ describe("package routes (Sprint 62)", () => {
         observedAt: Date.now(),
       });
     });
-    const story = (await db
+    const story = ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.title, title))
-      .get())!;
+      .where(eq(canonicalExternalStories.title, title)))[0])!;
     const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
     const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
@@ -172,8 +171,7 @@ describe("package routes (Sprint 62)", () => {
         expiresAt: null,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 

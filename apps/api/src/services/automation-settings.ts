@@ -18,11 +18,10 @@ import type { Db } from "../db";
 import { socialAutomationSettings } from "../db/schema";
 
 export async function getSocialAutomationSettings(db: Db, workspaceId: string): Promise<SocialAutomationSettings> {
-  const row = await db
+  const row = (await db
     .select()
     .from(socialAutomationSettings)
-    .where(eq(socialAutomationSettings.workspaceId, workspaceId))
-    .get();
+    .where(eq(socialAutomationSettings.workspaceId, workspaceId)))[0];
   return row
     ? {
         workspaceId,
@@ -78,7 +77,6 @@ export async function updateSocialAutomationSettings(
   };
   await db.insert(socialAutomationSettings)
     .values({ workspaceId, ...columns })
-    .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: columns })
-    .run();
+    .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: columns });
   return next;
 }

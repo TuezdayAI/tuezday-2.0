@@ -85,43 +85,39 @@ async function scopeRecord(
   scopeId: string,
 ): Promise<ScopeRecord | undefined> {
   if (scope === "workspace") {
-    const row = await db
+    const row = (await db
       .select({ name: workspaces.name })
       .from(workspaces)
-      .where(and(eq(workspaces.id, scopeId), eq(workspaces.id, workspaceId)))
-      .get();
+      .where(and(eq(workspaces.id, scopeId), eq(workspaces.id, workspaceId))))[0];
     return row ? { label: row.name, context: emptyContext() } : undefined;
   }
   if (scope === "campaign") {
-    const row = await db
+    const row = (await db
       .select({ name: campaigns.name })
       .from(campaigns)
-      .where(and(eq(campaigns.id, scopeId), eq(campaigns.workspaceId, workspaceId)))
-      .get();
+      .where(and(eq(campaigns.id, scopeId), eq(campaigns.workspaceId, workspaceId))))[0];
     return row
       ? { label: row.name, context: { ...emptyContext(), campaignId: scopeId } }
       : undefined;
   }
   if (scope === "persona") {
-    const row = await db
+    const row = (await db
       .select({ name: personas.name })
       .from(personas)
-      .where(and(eq(personas.id, scopeId), eq(personas.workspaceId, workspaceId)))
-      .get();
+      .where(and(eq(personas.id, scopeId), eq(personas.workspaceId, workspaceId))))[0];
     return row
       ? { label: row.name, context: { ...emptyContext(), personaId: scopeId } }
       : undefined;
   }
   if (scope === "connection") {
-    const row = await db
+    const row = (await db
       .select({
         displayName: connections.displayName,
         externalAccountName: connections.externalAccountName,
         providerKey: connections.providerKey,
       })
       .from(connections)
-      .where(and(eq(connections.id, scopeId), eq(connections.workspaceId, workspaceId)))
-      .get();
+      .where(and(eq(connections.id, scopeId), eq(connections.workspaceId, workspaceId))))[0];
     return row
       ? {
           label: row.displayName || row.externalAccountName || row.providerKey,
@@ -130,7 +126,7 @@ async function scopeRecord(
       : undefined;
   }
 
-  const row = await db
+  const row = (await db
     .select({
       name: campaignLaneRevisions.name,
       key: campaignLaneRevisions.key,
@@ -146,8 +142,7 @@ async function scopeRecord(
         eq(campaignLaneRevisions.id, scopeId),
         eq(campaignLaneRevisions.workspaceId, workspaceId),
       ),
-    )
-    .get();
+    ))[0];
   return row
     ? {
         label: row.name || row.laneName || row.key || "Campaign lane",
@@ -182,7 +177,7 @@ async function storedRule(
   scopeId: string,
   actionKind: ExternalActionKind,
 ): Promise<ExternalActionPolicyRule | undefined> {
-  return (await db
+  return ((await db
     .select({ rule: externalActionPolicyRules.rule })
     .from(externalActionPolicyRules)
     .where(
@@ -192,8 +187,7 @@ async function storedRule(
         eq(externalActionPolicyRules.scopeId, scopeId),
         eq(externalActionPolicyRules.actionKind, actionKind),
       ),
-    )
-    .get())?.rule as ExternalActionPolicyRule | undefined;
+    ))[0])?.rule as ExternalActionPolicyRule | undefined;
 }
 
 function contribution(
@@ -262,8 +256,7 @@ export async function listExternalActionPolicies(
         eq(externalActionPolicyRules.scope, scope),
         eq(externalActionPolicyRules.scopeId, scopeId),
       ),
-    )
-    .all())
+    ))
     .map(rowToRule);
   const effective = await Promise.all(EXTERNAL_ACTION_KINDS.map(async (actionKind) => ({
       actionKind,
@@ -319,8 +312,7 @@ export async function upsertExternalActionPolicies(
           eq(externalActionPolicyRules.scope, parsed.data.scope),
           eq(externalActionPolicyRules.scopeId, parsed.data.scopeId),
         ),
-      )
-      .all();
+      );
     const transactionUpdatedAt = existingRows.reduce<number | null>(
       (latest, row) => (latest === null || row.updatedAt > latest ? row.updatedAt : latest),
       null,
@@ -336,16 +328,14 @@ export async function upsertExternalActionPolicies(
       if (parsed.data.scope !== "workspace" && write.rule === "inherit") {
         if (existing) {
           await tx.delete(externalActionPolicyRules)
-            .where(eq(externalActionPolicyRules.id, existing.id))
-            .run();
+            .where(eq(externalActionPolicyRules.id, existing.id));
         }
         continue;
       }
       if (existing) {
         await tx.update(externalActionPolicyRules)
           .set({ rule: write.rule, updatedAt: now })
-          .where(eq(externalActionPolicyRules.id, existing.id))
-          .run();
+          .where(eq(externalActionPolicyRules.id, existing.id));
       } else {
         await tx.insert(externalActionPolicyRules)
           .values({
@@ -358,8 +348,7 @@ export async function upsertExternalActionPolicies(
             createdBy: actorUserId,
             createdAt: now,
             updatedAt: now,
-          })
-          .run();
+          });
       }
     }
   });
@@ -367,7 +356,7 @@ export async function upsertExternalActionPolicies(
 }
 
 export async function deleteExternalActionPolicy(db: Db, workspaceId: string, ruleId: string): Promise<boolean> {
-  const row = await db
+  const row = (await db
     .select()
     .from(externalActionPolicyRules)
     .where(
@@ -375,14 +364,12 @@ export async function deleteExternalActionPolicy(db: Db, workspaceId: string, ru
         eq(externalActionPolicyRules.workspaceId, workspaceId),
         eq(externalActionPolicyRules.id, ruleId),
       ),
-    )
-    .get();
+    ))[0];
   if (!row) return false;
   if (row.scope === "workspace") {
     throw new ExternalActionPolicyInputError("Workspace baseline policies cannot be deleted.");
   }
   await db.delete(externalActionPolicyRules)
-    .where(eq(externalActionPolicyRules.id, ruleId))
-    .run();
+    .where(eq(externalActionPolicyRules.id, ruleId));
   return true;
 }

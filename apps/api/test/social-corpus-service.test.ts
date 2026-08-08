@@ -58,12 +58,11 @@ async function seedConnection(db: Db, workspaceId: string, providerKey: string, 
       lastError: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 async function setup() {
-  const db = createTestDb();
+  const db = await createTestDb();
   const { user } = await registerAccount(db, {
     email: `sc-${randomUUID()}@test.dev`,
     password: "test-password-1",
@@ -140,7 +139,7 @@ describe("social corpus API + onboarding gate", () => {
   });
 
   it("GET /workspaces/:id/social-corpus returns the aggregate", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     app = await buildAuthedApp({ db, connectors: corpusFabric() });
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
@@ -153,7 +152,7 @@ describe("social corpus API + onboarding gate", () => {
   });
 
   it("blocks advancing past connect without a social connection (409)", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     app = await buildAuthedApp({ db, connectors: corpusFabric() });
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
@@ -168,7 +167,7 @@ describe("social corpus API + onboarding gate", () => {
   });
 
   it("allows advancing to connect/earlier and to done without a connection", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     app = await buildAuthedApp({ db, connectors: corpusFabric() });
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
@@ -184,7 +183,7 @@ describe("social corpus API + onboarding gate", () => {
   });
 
   it("allows advancing past connect once a social account is connected", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     app = await buildAuthedApp({ db, connectors: corpusFabric() });
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })

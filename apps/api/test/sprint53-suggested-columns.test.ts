@@ -89,8 +89,7 @@ const CAMPAIGN_ID = "55555555-5555-4555-8555-555555555555";
 
 async function seedScorableItem(db: Db): Promise<void> {
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Matching", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Matching", createdAt: 1, updatedAt: 1 });
   await db.insert(personas)
     .values({
       id: PERSONA_ID,
@@ -98,8 +97,7 @@ async function seedScorableItem(db: Db): Promise<void> {
       name: "Field CTO",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(campaigns)
     .values({
       id: CAMPAIGN_ID,
@@ -108,8 +106,7 @@ async function seedScorableItem(db: Db): Promise<void> {
       personaIdsJson: JSON.stringify([PERSONA_ID]),
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(discoverySources)
     .values({
       id: SOURCE_ID,
@@ -127,8 +124,7 @@ async function seedScorableItem(db: Db): Promise<void> {
       lastAttemptedAt: null,
       executionVersion: 1,
       createdAt: 1,
-    })
-    .run();
+    });
   await db.insert(discoveredItems)
     .values({
       id: ITEM_ID,
@@ -157,13 +153,12 @@ async function seedScorableItem(db: Db): Promise<void> {
       matchingHeartbeatAt: null,
       matchingError: null,
       createdAt: 1,
-    })
-    .run();
+    });
 }
 
 describe("scoring an item (Sprint 53)", () => {
   it("writes the match rows and the score reason, but leaves the legacy columns null", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedScorableItem(db);
     const llm: LlmGateway = {
       async generate() {
@@ -204,11 +199,10 @@ describe("scoring an item (Sprint 53)", () => {
     expect(result.ready).toBe(1);
 
     // The stored row keeps the real scoring output …
-    const row = (await db
+    const row = ((await db
       .select()
       .from(discoveredItems)
-      .where(eq(discoveredItems.id, ITEM_ID))
-      .get())!;
+      .where(eq(discoveredItems.id, ITEM_ID)))[0])!;
     expect(row.score).toBe(88);
     expect(row.scoreReason).toBe("Fits the launch.");
     expect(row.matchingState).toBe("ready");
@@ -221,8 +215,7 @@ describe("scoring an item (Sprint 53)", () => {
       await db
         .select()
         .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.itemId, ITEM_ID))
-        .all(),
+        .where(eq(discoveredItemMatches.itemId, ITEM_ID)),
     ).toHaveLength(1);
 
     // And the read path still projects it for the UI.

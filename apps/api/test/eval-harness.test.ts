@@ -77,7 +77,7 @@ describe("Sprint 67 — eval & replay harness", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: generatingGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Sprint67" } })
@@ -187,7 +187,7 @@ describe("Sprint 67 — eval & replay harness", () => {
         (entry) => entry.sourceDraftId === approvedId,
       )!;
 
-      await db.delete(drafts).where(eq(drafts.id, approvedId)).run();
+      await db.delete(drafts).where(eq(drafts.id, approvedId));
 
       const after = (await listEvalCases(db, workspaceId, suite.id)).find(
         (entry) => entry.id === before.id,
@@ -335,7 +335,7 @@ describe("Sprint 67 — eval & replay harness", () => {
         { userId: null },
       );
       // The case survives its source being deleted (set-null FK); the replay cannot.
-      await db.delete(signals).where(eq(signals.id, cases[0]!.signalId!)).run();
+      await db.delete(signals).where(eq(signals.id, cases[0]!.signalId!));
       const { deps } = depsFor([...caseScript(CLEAN), ...caseScript(CLEAN)]);
 
       const run = await runEvalSuite(

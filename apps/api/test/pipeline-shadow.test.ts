@@ -39,13 +39,11 @@ const HUMAN: DraftActor = { userId: null, label: "founder", human: true };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function fixture() {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Shadow", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Shadow", createdAt: 1, updatedAt: 1 });
   await db.insert(users)
-    .values({ id: USER_ID, email: "founder@example.com", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: USER_ID, email: "founder@example.com", createdAt: 1, updatedAt: 1 });
   await db.insert(campaigns)
     .values({
       id: CAMPAIGN_ID,
@@ -56,8 +54,7 @@ async function fixture() {
       automationMode: "human_in_the_loop",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(signals)
     .values({
       id: SIGNAL_ID,
@@ -66,8 +63,7 @@ async function fixture() {
       source: "manual",
       sourceUrl: null,
       createdAt: 2,
-    })
-    .run();
+    });
   const definition = await createPipelineDefinition(
     db,
     WORKSPACE_ID,
@@ -147,8 +143,7 @@ async function engineRun(
       createdBy: "automation",
       createdAt: Date.now(),
       ...over,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -225,8 +220,7 @@ describe("automation comparison (D-65.8)", () => {
     const stale = await legacyDraft(db, "old", "pr");
     await db.update(draftsTable)
       .set({ createdAt: Date.now() - 40 * DAY_MS })
-      .where(eq(draftsTable.id, stale.id))
-      .run();
+      .where(eq(draftsTable.id, stale.id));
 
     // Engine: one live run whose gate draft was approved untouched, plus a
     // failed shadow run and an escalated live run.
@@ -273,8 +267,7 @@ describe("automation comparison (D-65.8)", () => {
           cachedTokens: 0,
           costCents,
           createdAt: Date.now(),
-        })
-        .run();
+        });
     await usage("signal_draft", 7);
     await usage("review", 3);
     await usage("pipeline_run", 99);

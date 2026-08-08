@@ -6,7 +6,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import type { DbExecutor } from "../db";
+import { type DbExecutor, rowsAffected } from "../db";
 import {
   discoveredItemMatches,
   discoveredItems,
@@ -47,13 +47,12 @@ export async function invalidateMatching(
           eq(discoveredItems.matchingState, "ready"),
           isNull(discoveredItemMatches.id),
         ),
-      )
-      .all();
+      );
     for (const item of readyNoMatch) targetIds.add(item.id);
   }
 
   if (targetIds.size === 0) return 0;
-  return (await db
+  return rowsAffected((await db
     .update(discoveredItems)
     .set({
       matchingState: "pending",
@@ -71,8 +70,7 @@ export async function invalidateMatching(
         isNull(discoveredItems.duplicateOfId),
         inArray(discoveredItems.id, [...targetIds]),
       ),
-    )
-    .run()).changes;
+    )));
 }
 
 export async function itemIdsForPersona(
@@ -88,8 +86,7 @@ export async function itemIdsForPersona(
         eq(discoveredItemMatches.workspaceId, workspaceId),
         eq(discoveredItemMatches.personaId, personaId),
       ),
-    )
-    .all())
+    ))
     .map((row) => row.itemId);
 }
 
@@ -114,7 +111,6 @@ export async function itemIdsForCampaignChange(
         eq(discoveredItemMatches.workspaceId, workspaceId),
         blastRadius,
       ),
-    )
-    .all())
+    ))
     .map((row) => row.itemId);
 }

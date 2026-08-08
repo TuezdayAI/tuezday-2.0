@@ -155,10 +155,9 @@ describe("toAgentTools", () => {
   });
 
   it("drives a registry tool through a full AgentRunner loop", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: "ws-run", name: "Registry", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: "ws-run", name: "Registry", createdAt: 1, updatedAt: 1 });
 
     const { tool } = echoTool("search_evidence", z.object({ query: z.string() }));
     const gateway = new ScriptedGateway([

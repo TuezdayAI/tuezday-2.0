@@ -8,7 +8,7 @@ import {
   type DeliverableRunResult,
 } from "@tuezday/contracts";
 import { resolveContext, type BrainContents, type ResolvedContext } from "@tuezday/brain";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import {
   campaignLaneRevisions,
   contentPackages,
@@ -35,7 +35,6 @@ import { resolveDraftAccount } from "./resolve-account";
 import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { DATABASE_NOW_MS } from "./task-leases";
 import { getWorkspace } from "./workspaces";
-
 /** Consecutive retryable failures before the queue parks a deliverable `failed`. */
 export const GENERATION_MAX_ATTEMPTS = 3;
 
@@ -86,8 +85,7 @@ export async function claimGenerationBatch(
           ),
         ),
       )
-      .orderBy(asc(deliverables.createdAt), asc(deliverables.id))
-      .all();
+      .orderBy(asc(deliverables.createdAt), asc(deliverables.id));
     for (const row of due) {
       if (claims.length >= input.limit) break;
       const from = row.status as DeliverableProductionStatus;
@@ -107,9 +105,8 @@ export async function claimGenerationBatch(
             eq(deliverables.generationState, row.generationState),
             eq(deliverables.updatedAt, row.updatedAt),
           ),
-        )
-        .run();
-      if (claimed.changes !== 1) continue;
+        );
+      if (rowsAffected(claimed) !== 1) continue;
       await insertDeliverableEvent(tx, {
         workspaceId: input.workspaceId,
         deliverableId: row.id,
@@ -135,7 +132,7 @@ export async function claimGenerationBatch(
  */
 export async function markGenerationRetryable(db: Db, claim: GenerationClaim): Promise<boolean> {
   return await db.transaction(async (tx) => {
-    const row = await tx
+    const row = (await tx
       .select()
       .from(deliverables)
       .where(
@@ -144,8 +141,7 @@ export async function markGenerationRetryable(db: Db, claim: GenerationClaim): P
           eq(deliverables.status, "generating"),
           eq(deliverables.generationState, "in_progress"),
         ),
-      )
-      .get();
+      ))[0];
     if (!row) return false;
     if (!canTransitionDeliverable("generating", "ready")) return false;
     const attempts = row.generationAttempts + 1;
@@ -158,8 +154,7 @@ export async function markGenerationRetryable(db: Db, claim: GenerationClaim): P
         generationLeaseExpiresAt: null,
         updatedAt: now,
       })
-      .where(eq(deliverables.id, claim.deliverableId))
-      .run();
+      .where(eq(deliverables.id, claim.deliverableId));
     await insertDeliverableEvent(tx, {
       workspaceId: claim.workspaceId,
       deliverableId: claim.deliverableId,
@@ -204,11 +199,10 @@ export async function buildVariantContext(
   },
 ): Promise<VariantContext> {
   if (!deliverable.packageId) throw new VariantContextUnavailableError();
-  const lane = await db
+  const lane = (await db
     .select()
     .from(campaignLaneRevisions)
-    .where(eq(campaignLaneRevisions.id, deliverable.laneRevisionId))
-    .get();
+    .where(eq(campaignLaneRevisions.id, deliverable.laneRevisionId)))[0];
   if (!lane) throw new VariantContextUnavailableError();
   const capability = formatCapability(lane.channel, lane.format);
   if (!capability) throw new VariantContextUnavailableError();
@@ -221,16 +215,14 @@ export async function buildVariantContext(
     .select()
     .from(packageSources)
     .where(eq(packageSources.packageId, deliverable.packageId))
-    .orderBy(asc(packageSources.createdAt), asc(packageSources.id))
-    .all();
+    .orderBy(asc(packageSources.createdAt), asc(packageSources.id));
   const trigger = sources.find((source) => source.role === "trigger");
-  const assessment = await db
+  const assessment = (await db
     .select()
     .from(sufficiencyAssessments)
     .where(eq(sufficiencyAssessments.packageId, deliverable.packageId))
     .orderBy(desc(sufficiencyAssessments.assessmentVersion))
-    .limit(1)
-    .get();
+    .limit(1))[0];
   const claims = assessment
     ? (JSON.parse(assessment.supportedClaimsJson) as { claim: string }[])
     : [];
@@ -333,7 +325,7 @@ export async function commitVariant(
   const now = Date.now();
   try {
     return await db.transaction(async (tx) => {
-      const row = await tx
+      const row = (await tx
         .select()
         .from(deliverables)
         .where(
@@ -343,8 +335,7 @@ export async function commitVariant(
             eq(deliverables.status, "generating"),
             eq(deliverables.generationState, "in_progress"),
           ),
-        )
-        .get();
+        ))[0];
       if (!row) throw new GenerationFenceError();
       if (!canTransitionDeliverable("generating", "candidate_ready")) {
         throw new GenerationFenceError();
@@ -361,14 +352,12 @@ export async function commitVariant(
           model: input.model,
           provider: input.provider,
           createdAt: now,
-        })
-        .run();
+        });
       const version =
-        ((await tx
+        (((await tx
           .select({ n: sql<number>`MAX(${variants.variantVersion})` })
           .from(variants)
-          .where(eq(variants.deliverableId, claim.deliverableId))
-          .get())?.n ?? 0) + 1;
+          .where(eq(variants.deliverableId, claim.deliverableId)))[0])?.n ?? 0) + 1;
       const variantId = randomUUID();
       await tx.insert(variants)
         .values({
@@ -384,8 +373,7 @@ export async function commitVariant(
           durationMs: input.durationMs,
           createdByUserId: input.actorUserId,
           createdAt: now,
-        })
-        .run();
+        });
       await tx.update(deliverables)
         .set({
           status: "candidate_ready",
@@ -400,8 +388,7 @@ export async function commitVariant(
             eq(deliverables.id, claim.deliverableId),
             eq(deliverables.generationState, "in_progress"),
           ),
-        )
-        .run();
+        );
       await insertDeliverableEvent(tx, {
         workspaceId: claim.workspaceId,
         deliverableId: claim.deliverableId,
@@ -456,11 +443,10 @@ export async function runVariantGeneration(
       if (await markGenerationRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const row = await db
+    const row = (await db
       .select()
       .from(deliverables)
-      .where(eq(deliverables.id, claim.deliverableId))
-      .get();
+      .where(eq(deliverables.id, claim.deliverableId)))[0];
     if (!row) continue;
     let context: VariantContext;
     let generated: { text: string; model: string; provider: string; durationMs: number };

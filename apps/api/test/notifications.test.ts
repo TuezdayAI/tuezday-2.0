@@ -17,9 +17,9 @@ describe("notifications", () => {
   const WS = "ws-1";
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     process.env.TELEGRAM_BOT_TOKEN = "test-bot-token";
-    await db.insert(workspaces).values({ id: WS, name: "Test WS", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(workspaces).values({ id: WS, name: "Test WS", createdAt: Date.now(), updatedAt: Date.now() });
   });
 
   afterEach(() => {
@@ -110,7 +110,7 @@ describe("notifications", () => {
       expect(mailer.send).toHaveBeenCalledTimes(1);
 
       // 4 tokens should be minted (2 for telegram, 2 for email)
-      const tokens = await db.select().from(approvalActionTokens).all();
+      const tokens = await db.select().from(approvalActionTokens);
       expect(tokens).toHaveLength(4);
     });
   });

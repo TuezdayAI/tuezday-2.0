@@ -41,8 +41,7 @@ export async function listPublications(db: Db, workspaceId: string): Promise<Pub
     .from(publications)
     .leftJoin(drafts, eq(publications.draftId, drafts.id))
     .where(eq(publications.workspaceId, workspaceId))
-    .orderBy(desc(publications.createdAt))
-    .all();
+    .orderBy(desc(publications.createdAt));
   const metrics = await metricsByPublication(db, workspaceId);
   return rows.map(({ publication, draft }) => ({
     ...rowToPublication(publication),
@@ -63,8 +62,7 @@ export async function listCadencePublications(
     .select()
     .from(publications)
     .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
-    .orderBy(publications.scheduledFor)
-    .all())
+    .orderBy(publications.scheduledFor))
     .map(rowToPublication);
 }
 
@@ -73,11 +71,10 @@ export async function getPublication(
   workspaceId: string,
   publicationId: string,
 ): Promise<Publication | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(publications)
-    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
-    .get();
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId))))[0];
   return row ? rowToPublication(row) : undefined;
 }
 
@@ -86,7 +83,7 @@ export async function getPublicationByExternalAction(
   workspaceId: string,
   externalActionId: string,
 ): Promise<Publication | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(publications)
     .where(
@@ -94,8 +91,7 @@ export async function getPublicationByExternalAction(
         eq(publications.workspaceId, workspaceId),
         eq(publications.externalActionId, externalActionId),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToPublication(row) : undefined;
 }
 
@@ -107,7 +103,7 @@ export async function findLivePublication(
   connectionId: string,
   target: string,
 ): Promise<Publication | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(publications)
     .where(
@@ -118,15 +114,13 @@ export async function findLivePublication(
         eq(publications.target, target),
         inArray(publications.status, ["scheduled", "processing", "published"]),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToPublication(row) : undefined;
 }
 
 export async function deletePublication(db: Db, workspaceId: string, publicationId: string): Promise<void> {
   await db.delete(publications)
-    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
-    .run();
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)));
 }
 
 /**
@@ -183,7 +177,7 @@ export async function createPublication(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(publications).values(row).run();
+  await db.insert(publications).values(row);
   if (input.scheduledFor && input.scheduledFor > now) {
     return rowToPublication(row);
   }
@@ -220,7 +214,7 @@ interface PublicationAttemptResult {
 async function automatedPublication(db: Db, row: PublicationRow): Promise<boolean> {
   let campaignId: string | null = null;
   if (row.externalActionId) {
-    const action = await db
+    const action = (await db
       .select({ payloadJson: externalActions.payloadJson, campaignId: externalActions.campaignId })
       .from(externalActions)
       .where(
@@ -228,8 +222,7 @@ async function automatedPublication(db: Db, row: PublicationRow): Promise<boolea
           eq(externalActions.workspaceId, row.workspaceId),
           eq(externalActions.id, row.externalActionId),
         ),
-      )
-      .get();
+      ))[0];
     if (action) {
       campaignId = action.campaignId;
       try {
@@ -242,7 +235,7 @@ async function automatedPublication(db: Db, row: PublicationRow): Promise<boolea
   }
   if (!campaignId && row.cadenceId) {
     campaignId =
-      (await db
+      ((await db
         .select({ campaignId: postingCadences.campaignId })
         .from(postingCadences)
         .where(
@@ -250,16 +243,14 @@ async function automatedPublication(db: Db, row: PublicationRow): Promise<boolea
             eq(postingCadences.workspaceId, row.workspaceId),
             eq(postingCadences.id, row.cadenceId),
           ),
-        )
-        .get())?.campaignId ?? null;
+        ))[0])?.campaignId ?? null;
   }
   if (!campaignId) return false;
   return (
-    (await db
+    ((await db
       .select({ automationMode: campaigns.automationMode })
       .from(campaigns)
-      .where(and(eq(campaigns.workspaceId, row.workspaceId), eq(campaigns.id, campaignId)))
-      .get())?.automationMode === "scheduled_auto"
+      .where(and(eq(campaigns.workspaceId, row.workspaceId), eq(campaigns.id, campaignId))))[0])?.automationMode === "scheduled_auto"
   );
 }
 
@@ -271,11 +262,10 @@ async function attemptPublicationDetailed(
   workspaceId: string,
   publicationId: string,
 ): Promise<PublicationAttemptResult> {
-  const row = (await db
+  const row = ((await db
     .select()
     .from(publications)
-    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
-    .get())!;
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId))))[0])!;
   if (row.status === "published") {
     return { publication: rowToPublication(row), state: "published" };
   }
@@ -286,7 +276,7 @@ async function attemptPublicationDetailed(
   ) {
     return { publication: rowToPublication(row), state: "processing" };
   }
-  const draft = await db.select().from(drafts).where(eq(drafts.id, row.draftId)).get();
+  const draft = (await db.select().from(drafts).where(eq(drafts.id, row.draftId)))[0];
   const connection = await getConnection(db, workspaceId, row.connectionId);
   const provider = connection ? providerByKey(connection.providerKey) : undefined;
   const adapter =
@@ -346,8 +336,7 @@ async function attemptPublicationDetailed(
           lastError: null,
           updatedAt: attemptedAt,
         })
-        .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
-        .run();
+        .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)));
       return {
         publication: (await getPublication(db, workspaceId, row.id))!,
         state: "processing",
@@ -364,8 +353,7 @@ async function attemptPublicationDetailed(
         lastError: null,
         updatedAt: attemptedAt,
       })
-      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
-      .run();
+      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)));
     await emitEvent(db, fetcher, workspaceId, "post.published", {
       publicationId: row.id,
       draftId: row.draftId,
@@ -385,8 +373,7 @@ async function attemptPublicationDetailed(
         lastError: error,
         updatedAt: Date.now(),
       })
-      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
-      .run();
+      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)));
     return {
       publication: (await getPublication(db, workspaceId, row.id))!,
       state: "failed",
@@ -435,8 +422,7 @@ export async function runDuePublications(
         ),
       ),
     )
-    .orderBy(publications.scheduledFor)
-    .all();
+    .orderBy(publications.scheduledFor);
 
   const results: PublishRunResult[] = [];
   for (const row of due) {

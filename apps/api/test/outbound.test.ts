@@ -53,7 +53,7 @@ describe("outbound API", () => {
   let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     emailProvider = new FakeOutboundEmailProvider();
     app = await buildAuthedApp({ db, llm: fakeGateway(), outboundEmail: emailProvider });
     workspaceId = (
@@ -99,7 +99,7 @@ describe("outbound API", () => {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    }).onConflictDoNothing().run();
+    }).onConflictDoNothing();
     if (!allow) return;
     await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
@@ -108,7 +108,7 @@ describe("outbound API", () => {
       status: "allowed",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
   }
 
   async function approvedDraftForLead(leadId: string): Promise<{ id: string; content: string }> {

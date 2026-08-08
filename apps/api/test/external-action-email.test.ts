@@ -51,7 +51,7 @@ describe("governed email external actions", () => {
   let provider: FakeProvider;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     workspaceId = (await createWorkspace(db, { name: "Acme" })).id;
     const submitted = await submitDraft(db, {
       workspaceId,
@@ -76,7 +76,7 @@ describe("governed email external actions", () => {
       status: "active",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     await db.insert(launchMessages).values({
       id: messageId,
       workspaceId,
@@ -89,7 +89,7 @@ describe("governed email external actions", () => {
       status: "pending",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     await db.insert(workspaceEmailSenders).values({
       workspaceId,
       domain: "example.com",
@@ -107,7 +107,7 @@ describe("governed email external actions", () => {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
@@ -115,7 +115,7 @@ describe("governed email external actions", () => {
       status: "allowed",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     provider = new FakeProvider();
   });
 
@@ -153,7 +153,7 @@ describe("governed email external actions", () => {
       text: "Hello from Acme.",
       idempotencyKey: `send/${proposed.action.id}`,
     });
-    expect(await db.select().from(emailDeliveries).get()).toMatchObject({
+    expect((await db.select().from(emailDeliveries))[0]).toMatchObject({
       externalActionId: proposed.action.id,
       status: "accepted",
       providerMessageId: "email_123",
@@ -172,13 +172,13 @@ describe("governed email external actions", () => {
   });
 
   it("blocks unverified senders and unknown recipient permission", async () => {
-    await db.update(workspaceEmailSenders).set({ status: "pending" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
+    await db.update(workspaceEmailSenders).set({ status: "pending" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId));
     const unverified = await runtime().propose(await command(), actor);
     const blockedSender = await runtime().authorize(unverified.action.id, workspaceId, actor);
     expect(blockedSender.action.blocker?.code).toBe("sender_unverified");
 
-    await db.update(workspaceEmailSenders).set({ status: "verified" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
-    await db.delete(emailRecipientPermissions).run();
+    await db.update(workspaceEmailSenders).set({ status: "verified" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId));
+    await db.delete(emailRecipientPermissions);
     const unknown = await runtime().propose(await command(), actor);
     const blockedRecipient = await runtime().authorize(unknown.action.id, workspaceId, actor);
     expect(blockedRecipient.action.blocker?.code).toBe("permission_unknown");
@@ -186,7 +186,7 @@ describe("governed email external actions", () => {
 
   it("detects origin edits before authorization", async () => {
     const proposed = await runtime().propose(await command(), actor);
-    await db.update(drafts).set({ content: "Changed subject\nChanged body", updatedAt: Date.now() }).where(eq(drafts.id, draftId)).run();
+    await db.update(drafts).set({ content: "Changed subject\nChanged body", updatedAt: Date.now() }).where(eq(drafts.id, draftId));
     await expect(await runtime().authorize(proposed.action.id, workspaceId, actor)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
@@ -222,7 +222,7 @@ describe("governed email external actions", () => {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     const [retry] = await runtime().run(workspaceId);
     expect(retry?.execution?.id).toBe(deliveryId);
     expect(provider.send).not.toHaveBeenCalled();
@@ -239,7 +239,7 @@ describe("governed email external actions", () => {
     const proposed = await runtime().propose(await command(), actor);
     const first = await runtime().authorize(proposed.action.id, workspaceId, actor);
     expect(first.action.status).toBe("dispatching");
-    expect((await db.select().from(emailDeliveries).get())?.status).toBe("queued");
+    expect(((await db.select().from(emailDeliveries))[0])?.status).toBe("queued");
 
     const [retried] = await runtime().run(workspaceId);
     expect(retried?.execution?.status).toBe("accepted");

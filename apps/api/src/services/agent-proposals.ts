@@ -380,7 +380,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       const capReached = await capped(origin);
       if (capReached) return capReached;
 
-      const message = await db
+      const message = (await db
         .select()
         .from(launchMessages)
         .where(
@@ -388,8 +388,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
             eq(launchMessages.workspaceId, origin.workspaceId),
             eq(launchMessages.id, args.launchMessageId),
           ),
-        )
-        .get();
+        ))[0];
       if (!message) {
         return refuse("launch_message_not_found", `No sequence message ${args.launchMessageId}.`);
       }

@@ -60,8 +60,7 @@ export async function listLaneRevisionsForPlan(
         eq(campaignLaneRevisions.workspaceId, workspaceId),
         eq(campaignLaneRevisions.planRevisionId, planRevisionId),
       ),
-    )
-    .all())
+    ))
     .map((revision) =>
       campaignLaneRevisionViewSchema.parse({
         ...rowToLaneRevision(revision),
@@ -79,7 +78,7 @@ export async function upsertLaneRevision(
   input: UpsertCampaignLaneRevisionInput,
 ): Promise<CampaignLaneRevision> {
   const parsed = upsertCampaignLaneRevisionInputSchema.parse(input);
-  const plan = await db
+  const plan = (await db
     .select()
     .from(campaignPlanRevisions)
     .where(
@@ -88,29 +87,26 @@ export async function upsertLaneRevision(
         eq(campaignPlanRevisions.workspaceId, workspaceId),
         eq(campaignPlanRevisions.campaignId, campaignId),
       ),
-    )
-    .get();
+    ))[0];
   if (!plan) throw new CampaignPlanNotFoundError();
   if (plan.status !== "draft") throw new PlanImmutableError();
 
-  const persona = await db
+  const persona = (await db
     .select({ id: personas.id })
     .from(personas)
-    .where(and(eq(personas.id, parsed.personaId), eq(personas.workspaceId, workspaceId)))
-    .get();
+    .where(and(eq(personas.id, parsed.personaId), eq(personas.workspaceId, workspaceId))))[0];
   if (!persona) throw new CampaignPlanNotFoundError("The lane persona is not in this workspace.");
   if (parsed.audienceId) {
-    const audience = await db
+    const audience = (await db
       .select({ id: audiences.id })
       .from(audiences)
-      .where(and(eq(audiences.id, parsed.audienceId), eq(audiences.workspaceId, workspaceId)))
-      .get();
+      .where(and(eq(audiences.id, parsed.audienceId), eq(audiences.workspaceId, workspaceId))))[0];
     if (!audience) {
       throw new CampaignPlanNotFoundError("The lane audience is not in this workspace.");
     }
   }
   if (parsed.publishingConnectionId) {
-    const connection = await db
+    const connection = (await db
       .select({ id: connections.id })
       .from(connections)
       .where(
@@ -118,8 +114,7 @@ export async function upsertLaneRevision(
           eq(connections.id, parsed.publishingConnectionId),
           eq(connections.workspaceId, workspaceId),
         ),
-      )
-      .get();
+      ))[0];
     if (!connection) {
       throw new CampaignPlanNotFoundError("The publishing connection is not in this workspace.");
     }
@@ -128,7 +123,7 @@ export async function upsertLaneRevision(
   const now = Date.now();
   return await db.transaction(async (tx) => {
     let lane = input.laneId
-      ? await tx
+      ? (await tx
           .select()
           .from(campaignLanes)
           .where(
@@ -137,13 +132,11 @@ export async function upsertLaneRevision(
               eq(campaignLanes.workspaceId, workspaceId),
               eq(campaignLanes.campaignId, campaignId),
             ),
-          )
-          .get()
-      : await tx
+          ))[0]
+      : (await tx
           .select()
           .from(campaignLanes)
-          .where(and(eq(campaignLanes.campaignId, campaignId), eq(campaignLanes.key, input.key)))
-          .get();
+          .where(and(eq(campaignLanes.campaignId, campaignId), eq(campaignLanes.key, input.key))))[0];
     if (input.laneId && !lane) throw new CampaignPlanNotFoundError("The stable lane does not exist.");
     if (!lane) {
       lane = {
@@ -156,10 +149,10 @@ export async function upsertLaneRevision(
         createdAt: now,
         updatedAt: now,
       };
-      await tx.insert(campaignLanes).values(lane).run();
+      await tx.insert(campaignLanes).values(lane);
     }
 
-    const existing = await tx
+    const existing = (await tx
       .select()
       .from(campaignLaneRevisions)
       .where(
@@ -167,8 +160,7 @@ export async function upsertLaneRevision(
           eq(campaignLaneRevisions.laneId, lane.id),
           eq(campaignLaneRevisions.planRevisionId, planRevisionId),
         ),
-      )
-      .get();
+      ))[0];
     const columns = {
       key: parsed.key,
       name: parsed.name,
@@ -188,8 +180,7 @@ export async function upsertLaneRevision(
     if (existing) {
       await tx.update(campaignLaneRevisions)
         .set(columns)
-        .where(eq(campaignLaneRevisions.id, existing.id))
-        .run();
+        .where(eq(campaignLaneRevisions.id, existing.id));
       return rowToLaneRevision({ ...existing, ...columns });
     }
     const row: CampaignLaneRevisionRow = {
@@ -200,7 +191,7 @@ export async function upsertLaneRevision(
       ...columns,
       createdAt: now,
     };
-    await tx.insert(campaignLaneRevisions).values(row).run();
+    await tx.insert(campaignLaneRevisions).values(row);
     return rowToLaneRevision(row);
   });
 }

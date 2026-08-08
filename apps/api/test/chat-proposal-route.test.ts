@@ -82,8 +82,8 @@ async function proposeInThread(app: App, workspaceId: string) {
   return { sessionId, turn };
 }
 
-beforeEach(() => {
-  db = createTestDb();
+beforeEach(async () => {
+  db = await createTestDb();
 });
 
 describe("a proposal reaches the founder", () => {
@@ -97,7 +97,7 @@ describe("a proposal reaches the founder", () => {
     expect(chatProposalSchema.safeParse(proposals[0]).success).toBe(true);
     expect(proposals[0]!.status).toBe("pending");
     // Nothing exists yet.
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
   });
 
   it("is listed on the thread and on its detail, so a reload does not lose it", async () => {
@@ -158,7 +158,7 @@ describe("confirming", () => {
     expect(proposal.producedRef).toMatch(/^draft:/);
     expect(proposal.confirmedByUserId).toBeTruthy();
 
-    const stored = await db.select().from(drafts).all();
+    const stored = await db.select().from(drafts);
     expect(stored).toHaveLength(1);
     expect(stored[0]!.state).toBe("pending_review");
   });
@@ -173,7 +173,7 @@ describe("confirming", () => {
     const again = await app.inject({ method: "POST", url });
     expect(again.statusCode).toBe(409);
     expect(again.json().error).toBe("already_resolved");
-    expect(await db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(drafts)).toHaveLength(1);
   });
 
   it("404s an unknown proposal and one from another thread", async () => {
@@ -197,7 +197,7 @@ describe("confirming", () => {
       headers: { authorization: "Bearer not-a-session" },
     });
     expect(res.statusCode).toBe(401);
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
   });
 });
 
@@ -213,6 +213,6 @@ describe("declining", () => {
     });
     expect(res.statusCode).toBe(200);
     expect((res.json() as ChatProposal).status).toBe("declined");
-    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts)).toHaveLength(0);
   });
 });

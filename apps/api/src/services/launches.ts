@@ -139,15 +139,14 @@ function rowToMessage(row: LaunchMessageRow, draft: DraftRow | null): LaunchMess
 // ---------------------------------------------------------------------------
 
 async function getLaunchRow(db: Db, workspaceId: string, launchId: string): Promise<LaunchRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(launches)
-    .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, launchId)))
-    .get();
+    .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, launchId))))[0];
 }
 
 async function countMessages(db: Db, launchId: string): Promise<number> {
-  return (await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).all()).length;
+  return (await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId))).length;
 }
 
 export async function createLaunch(db: Db, workspaceId: string, input: CreateLaunchInput): Promise<Launch> {
@@ -167,7 +166,7 @@ export async function createLaunch(db: Db, workspaceId: string, input: CreateLau
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(launches).values(row).run();
+  await db.insert(launches).values(row);
   return rowToLaunch(row, 0);
 }
 
@@ -176,8 +175,7 @@ export async function listLaunches(db: Db, workspaceId: string): Promise<Launch[
       .select()
       .from(launches)
       .where(eq(launches.workspaceId, workspaceId))
-      .orderBy(desc(launches.createdAt))
-      .all())
+      .orderBy(desc(launches.createdAt)))
       .map(async (row) => rowToLaunch(row, await countMessages(db, row.id))));
 }
 
@@ -198,8 +196,7 @@ export async function getLaunchDetail(
     .from(launchMessages)
     .leftJoin(drafts, eq(launchMessages.draftId, drafts.id))
     .where(eq(launchMessages.launchId, launchId))
-    .orderBy(launchMessages.createdAt)
-    .all();
+    .orderBy(launchMessages.createdAt);
   const messages = joined.map(({ message, draft }) => rowToMessage(message, draft ?? null));
   const recipientCount = new Set(
     messages.filter((m) => m.recipientId).map((m) => `${m.recipientType}:${m.recipientId}`),
@@ -227,13 +224,13 @@ export async function updateLaunchSequenceConfig(
   if (input.automationMode !== undefined) set.automationMode = input.automationMode;
   if (input.stopOnReply !== undefined) set.stopOnReply = input.stopOnReply ? 1 : 0;
   if (input.xConnectionId !== undefined) set.xConnectionId = input.xConnectionId;
-  await db.update(launches).set(set).where(eq(launches.id, launchId)).run();
+  await db.update(launches).set(set).where(eq(launches.id, launchId));
   return await getLaunch(db, workspaceId, launchId);
 }
 
 export async function deleteLaunch(db: Db, workspaceId: string, launchId: string): Promise<boolean> {
   if (!await getLaunchRow(db, workspaceId, launchId)) return false;
-  await db.delete(launches).where(eq(launches.id, launchId)).run();
+  await db.delete(launches).where(eq(launches.id, launchId));
   return true;
 }
 
@@ -275,7 +272,7 @@ async function insertMessage(db: DbExecutor, id: string, fields: Partial<LaunchM
   kind: LaunchMessageKind;
 }): Promise<boolean> {
   const now = Date.now();
-  return Boolean(await db.insert(launchMessages)
+  return Boolean((await db.insert(launchMessages)
     .values({
       id,
       recipientType: null,
@@ -296,12 +293,11 @@ async function insertMessage(db: DbExecutor, id: string, fields: Partial<LaunchM
       ...fields,
     })
     .onConflictDoNothing({ target: launchMessages.id })
-    .returning({ id: launchMessages.id })
-    .get());
+    .returning({ id: launchMessages.id }))[0]);
 }
 
 async function setStatus(db: Db, launchId: string, status: Launch["status"]): Promise<void> {
-  await db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
+  await db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId));
 }
 
 export type EnqueueLaunchGenerationResult =
@@ -335,7 +331,7 @@ export async function enqueueLaunchGeneration(
 
   return await db.transaction(async (tx): Promise<EnqueueLaunchGenerationResult> => {
     const now = Date.now();
-    const generating = await tx
+    const generating = (await tx
       .update(launches)
       .set({ status: "generating", updatedAt: now })
       .where(and(
@@ -343,8 +339,7 @@ export async function enqueueLaunchGeneration(
         eq(launches.id, launchId),
         eq(launches.status, "draft"),
       ))
-      .returning()
-      .get();
+      .returning())[0];
     if (!generating) return { ok: false, error: "not_draft" };
     const job = await enqueueBackgroundJob(tx, {
       payload: { kind: "launch_generate", workspaceId, launchId, input, actor },
@@ -477,8 +472,7 @@ export async function resumeLaunchGeneration(
     const storedIds = new Set(
       (await db.select({ id: launchMessages.id })
         .from(launchMessages)
-        .where(eq(launchMessages.launchId, launchId))
-        .all())
+        .where(eq(launchMessages.launchId, launchId)))
         .map((row) => row.id),
     );
     const missing = units.filter((unit) => !storedIds.has(unit.id));
@@ -597,8 +591,7 @@ export async function resumeLaunchGeneration(
   const terminalIds = new Set(
     (await db.select({ id: launchMessages.id })
       .from(launchMessages)
-      .where(eq(launchMessages.launchId, launchId))
-      .all())
+      .where(eq(launchMessages.launchId, launchId)))
       .map((row) => row.id),
   );
   if (!requiredUnitIds.every((id) => terminalIds.has(id))) {
@@ -614,7 +607,7 @@ export async function resumeLaunchGeneration(
 
 async function draftRow(db: Db, draftId: string | null): Promise<DraftRow | undefined> {
   if (!draftId) return undefined;
-  return await db.select().from(drafts).where(eq(drafts.id, draftId)).get();
+  return (await db.select().from(drafts).where(eq(drafts.id, draftId)))[0];
 }
 
 async function isApproved(db: Db, draftId: string | null): Promise<boolean> {
@@ -706,8 +699,7 @@ export async function exportLaunchEmail(
   const rows = await db
     .select()
     .from(launchMessages)
-    .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, "email")))
-    .all();
+    .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, "email")));
 
   const messages = [];
   for (const row of rows) {
@@ -750,8 +742,7 @@ export async function dispatchChannel(
   const rows = await db
     .select()
     .from(launchMessages)
-    .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, channel)))
-    .all();
+    .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, channel)));
 
   // A message is dispatchable while its human-approved content has not gone
   // out: pending or failed, never skipped. Already-sent messages report their
@@ -801,8 +792,7 @@ export async function dispatchChannel(
       }
       await db.update(launchMessages)
         .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
-        .where(eq(launchMessages.id, row.id))
-        .run();
+        .where(eq(launchMessages.id, row.id));
       submissions.push(submission);
     }
     return { ok: true, submissions };
@@ -858,7 +848,6 @@ export async function maybeCompleteLaunch(db: Db, workspaceId: string, launchId:
   const pending = await db
     .select()
     .from(launchMessages)
-    .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.status, "pending")))
-    .all();
+    .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.status, "pending")));
   if (pending.length === 0) await setStatus(db, launchId, "completed");
 }

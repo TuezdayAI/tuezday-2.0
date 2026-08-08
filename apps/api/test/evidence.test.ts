@@ -85,7 +85,7 @@ describe("evidence API", () => {
       lastQuery: null,
       lastCollectionId: null,
     };
-    db = createTestDb();
+    db = await createTestDb();
     store = fakeStore(state);
     app = await buildAuthedApp({ db, llm: fakeLlm, evidence: store });
     workspaceId = (
@@ -299,8 +299,7 @@ describe("evidence API", () => {
       const ts = Date.now();
       const connectionId = randomUUID();
       await db.insert(connections)
-        .values({ id: connectionId, workspaceId, providerKey: "reddit", nangoConnectionId: "n-1", createdAt: ts, updatedAt: ts })
-        .run();
+        .values({ id: connectionId, workspaceId, providerKey: "reddit", nangoConnectionId: "n-1", createdAt: ts, updatedAt: ts });
       const draftId = randomUUID();
       await db.insert(drafts)
         .values({
@@ -313,8 +312,7 @@ describe("evidence API", () => {
           state: "approved",
           createdAt: ts,
           updatedAt: ts,
-        })
-        .run();
+        });
       const pubId = randomUUID();
       await db.insert(publications)
         .values({
@@ -330,8 +328,7 @@ describe("evidence API", () => {
           publishedAt: ts,
           createdAt: ts,
           updatedAt: ts,
-        })
-        .run();
+        });
       return { pubId, content, title, publishedAt: ts };
     }
 
@@ -459,8 +456,7 @@ describe("evidence API", () => {
           sourceRef: null,
           sourceCreatedAt: null,
           createdAt: Date.now(),
-        })
-        .run();
+        });
     }
 
     it("attaches pre-existing ready documents to the workspace collection", async () => {
@@ -507,7 +503,7 @@ describe("evidence with the native DbEvidenceStore", () => {
   };
 
   beforeEach(async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const store = new DbEvidenceStore(db, embedLlm);
     app = await buildAuthedApp({ db, llm: embedLlm, evidence: store });
     workspaceId = (

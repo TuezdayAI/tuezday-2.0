@@ -147,7 +147,7 @@ describe("Instagram publication recovery", () => {
 
   async function startVideo(status: InstagramState["status"]) {
     const state: InstagramState = { calls: [], status };
-    const db: Db = createTestDb();
+    const db: Db = await createTestDb();
     const testApp = await buildAuthedApp({ db, connectors: fabricFor(state) });
     app = testApp;
     const workspaceId = (
@@ -168,8 +168,7 @@ describe("Instagram publication recovery", () => {
         status: "connected",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     await db.insert(drafts)
       .values({
         id: draftId,
@@ -182,8 +181,7 @@ describe("Instagram publication recovery", () => {
         mediaJson: JSON.stringify([{ url: "https://cdn.test/reel.mp4", type: "video" }]),
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     expect(
       (
         await putActionPolicy(testApp, workspaceId, "workspace", workspaceId, {
@@ -213,7 +211,7 @@ describe("Instagram publication recovery", () => {
       action: { status: "dispatching", completedAt: null },
       execution: { status: "processing", error: null },
     });
-    const [processing] = await db.select().from(publications).all();
+    const [processing] = await db.select().from(publications);
     expect(processing).toMatchObject({
       status: "processing",
       providerOperationId: "container-1",
@@ -252,9 +250,9 @@ describe("Instagram publication recovery", () => {
     });
     expect(pending.json().actions[0]).toMatchObject({ action: { status: "dispatching" } });
     expect(calls(state, "GET", "?fields=status_code")).toBe(1);
-    expect(await db.select().from(publications).get()).toMatchObject({ processingAttempts: 1 });
+    expect((await db.select().from(publications))[0]).toMatchObject({ processingAttempts: 1 });
 
-    const retryAt = (await db.select().from(publications).get())!.nextAttemptAt!;
+    const retryAt = ((await db.select().from(publications))[0])!.nextAttemptAt!;
     vi.setSystemTime(new Date(retryAt + 1));
     state.status = "FINISHED";
     const finished = await testApp.inject({
@@ -265,7 +263,7 @@ describe("Instagram publication recovery", () => {
       action: { status: "succeeded", completedAt: expect.any(Number) },
       execution: { status: "published", error: null },
     });
-    expect(await db.select().from(publications).get()).toMatchObject({
+    expect((await db.select().from(publications))[0]).toMatchObject({
       status: "published",
       providerOperationId: "container-1",
       externalId: "media-1",
@@ -291,7 +289,7 @@ describe("Instagram publication recovery", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-08-07T10:00:00Z"));
     const { state, db, testApp, workspaceId } = await startVideo("ERROR");
-    const processing = (await db.select().from(publications).get())!;
+    const processing = ((await db.select().from(publications))[0])!;
     vi.setSystemTime(new Date(processing.nextAttemptAt! + 1));
 
     const failed = await testApp.inject({
@@ -302,7 +300,7 @@ describe("Instagram publication recovery", () => {
       action: { status: "failed", completedAt: expect.any(Number) },
       execution: { status: "failed", error: expect.stringContaining("could not process") },
     });
-    expect(await db.select().from(publications).get()).toMatchObject({
+    expect((await db.select().from(publications))[0]).toMatchObject({
       status: "failed",
       providerOperationId: "container-1",
       processingAttempts: 1,

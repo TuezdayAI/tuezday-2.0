@@ -35,8 +35,7 @@ export async function listExecutionResults(
   for (const row of await db
     .select({ id: campaigns.id, name: campaigns.name })
     .from(campaigns)
-    .where(eq(campaigns.workspaceId, workspaceId))
-    .all()) {
+    .where(eq(campaigns.workspaceId, workspaceId))) {
     campaignNames.set(row.id, row.name);
   }
   const campaignOf = (campaignId: string | null | undefined) => {
@@ -68,8 +67,7 @@ async function emailDeliveryResults(
     .select({ delivery: emailDeliveries, action: externalActions })
     .from(emailDeliveries)
     .innerJoin(externalActions, eq(emailDeliveries.externalActionId, externalActions.id))
-    .where(eq(emailDeliveries.workspaceId, workspaceId))
-    .all();
+    .where(eq(emailDeliveries.workspaceId, workspaceId));
   return rows.map(({ delivery, action }) => {
     const running = delivery.status === "queued" || delivery.status === "accepted";
     const completed = delivery.status === "delivered";
@@ -112,8 +110,7 @@ async function adMutationResults(
         inArray(externalActions.status, ["succeeded", "failed"]),
         eq(externalActions.executionKind, "ad_mutation"),
       ),
-    )
-    .all();
+    );
   const results: ExecutionResult[] = [];
   for (const row of rows) {
     if (
@@ -165,8 +162,7 @@ async function publicationResults(db: Db, workspaceId: string, campaignOf: Campa
     .select({ publication: publications, draft: drafts })
     .from(publications)
     .leftJoin(drafts, eq(publications.draftId, drafts.id))
-    .where(and(eq(publications.workspaceId, workspaceId), ne(publications.status, "scheduled")))
-    .all();
+    .where(and(eq(publications.workspaceId, workspaceId), ne(publications.status, "scheduled")));
   return rows.map(({ publication, draft }) => {
     const failed = publication.status === "failed";
     const processing = publication.status === "processing";
@@ -198,8 +194,7 @@ async function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf
   const launchRows = await db
     .select()
     .from(launches)
-    .where(eq(launches.workspaceId, workspaceId))
-    .all();
+    .where(eq(launches.workspaceId, workspaceId));
   if (launchRows.length === 0) return [];
   const messageRows = await db
     .select({
@@ -215,8 +210,7 @@ async function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf
         launchMessages.launchId,
         launchRows.map((row) => row.id),
       ),
-    )
-    .all();
+    );
 
   const byLaunch = new Map<
     string,
@@ -293,8 +287,7 @@ async function adLaunchResults(db: Db, workspaceId: string, campaignOf: Campaign
   const rows = await db
     .select()
     .from(adLaunches)
-    .where(eq(adLaunches.workspaceId, workspaceId))
-    .all();
+    .where(eq(adLaunches.workspaceId, workspaceId));
   const results: ExecutionResult[] = [];
   for (const launch of rows) {
     const launched = launch.status === "launched";

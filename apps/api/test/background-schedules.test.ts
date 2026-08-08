@@ -28,15 +28,14 @@ describe("persisted background schedules", () => {
   const t0 = 1_800_000_000_000;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await db.insert(workspaces)
       .values({
         id: WORKSPACE_ID,
         name: "Scheduled",
         createdAt: t0,
         updatedAt: t0,
-      })
-      .run();
+      });
   });
 
   it("creates every recurring schedule once and updates intervals in place", async () => {
@@ -47,7 +46,7 @@ describe("persisted background schedules", () => {
       await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0 + 1),
     ).toBe(0);
 
-    const rows = await db.select().from(backgroundSchedules).all();
+    const rows = await db.select().from(backgroundSchedules);
     expect(rows).toHaveLength(BACKGROUND_RECURRING_JOB_KINDS.length);
     expect(new Set(rows.map((row) => row.kind))).toEqual(
       new Set(BACKGROUND_RECURRING_JOB_KINDS),
@@ -63,11 +62,10 @@ describe("persisted background schedules", () => {
     };
     expect(await reconcileBackgroundSchedules(db, changed, t0 + 2)).toBe(0);
     expect(
-      await db
+      (await db
         .select()
         .from(backgroundSchedules)
-        .where(eq(backgroundSchedules.kind, "evidence"))
-        .get(),
+        .where(eq(backgroundSchedules.kind, "evidence")))[0],
     ).toMatchObject({ intervalMs: 45 * 60_000, nextRunAt: t0 });
   });
 
@@ -89,7 +87,7 @@ describe("persisted background schedules", () => {
       ),
     ).toEqual({ admitted: 0, scanned: 0 });
 
-    const jobs = await db.select().from(backgroundJobs).all();
+    const jobs = await db.select().from(backgroundJobs);
     expect(jobs).toHaveLength(BACKGROUND_RECURRING_JOB_KINDS.length);
     for (const job of jobs) {
       expect(backgroundJobPayloadSchema.parse(JSON.parse(job.payloadJson))).toEqual({
@@ -102,29 +100,25 @@ describe("persisted background schedules", () => {
 
   it("admits one overdue occurrence and advances beyond now without a catch-up storm", async () => {
     await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
-    const evidence = (await db
+    const evidence = ((await db
       .select()
       .from(backgroundSchedules)
-      .where(eq(backgroundSchedules.kind, "evidence"))
-      .get())!;
+      .where(eq(backgroundSchedules.kind, "evidence")))[0])!;
     await db.delete(backgroundSchedules)
-      .where(eq(backgroundSchedules.id, evidence.id))
-      .run();
+      .where(eq(backgroundSchedules.id, evidence.id));
     await db.update(backgroundSchedules)
       .set({ enabled: false })
-      .where(eq(backgroundSchedules.workspaceId, WORKSPACE_ID))
-      .run();
-    await db.insert(backgroundSchedules).values(evidence).run();
+      .where(eq(backgroundSchedules.workspaceId, WORKSPACE_ID));
+    await db.insert(backgroundSchedules).values(evidence);
 
     const now = t0 + evidence.intervalMs * 4 + 123;
     expect(
       await admitDueBackgroundSchedules(db, now, DEFAULT_BACKGROUND_JOB_POLICY.maxAttempts),
     ).toEqual({ admitted: 1, scanned: 1 });
-    const advanced = (await db
+    const advanced = ((await db
       .select()
       .from(backgroundSchedules)
-      .where(eq(backgroundSchedules.id, evidence.id))
-      .get())!;
+      .where(eq(backgroundSchedules.id, evidence.id)))[0])!;
     expect(advanced.nextRunAt).toBe(t0 + evidence.intervalMs * 5);
     expect(advanced.nextRunAt).toBeGreaterThan(now);
   });
@@ -151,8 +145,7 @@ describe("persisted background schedules", () => {
     // priority can decide which job is claimed.
     const collapsed = 1_700_000_000_000;
     await db.update(backgroundJobs)
-      .set({ availableAt: collapsed, createdAt: collapsed })
-      .run();
+      .set({ availableAt: collapsed, createdAt: collapsed });
 
     const [claim] = await claimBackgroundJobs(db, {
       owner: "worker-a",
@@ -166,7 +159,7 @@ describe("persisted background schedules", () => {
 
   it("cascades schedules when a workspace is deleted", async () => {
     await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
-    await db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_ID)).run();
-    expect(await db.select().from(backgroundSchedules).all()).toEqual([]);
+    await db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_ID));
+    expect(await db.select().from(backgroundSchedules)).toEqual([]);
   });
 });

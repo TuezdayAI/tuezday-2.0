@@ -31,7 +31,7 @@ const ACTOR = { userId: null, label: "Founder", human: true };
 async function seedWorkspace(db: Db, name = "Batch Lab"): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  await db.insert(workspaces).values({ id, name, createdAt: now, updatedAt: now }).run();
+  await db.insert(workspaces).values({ id, name, createdAt: now, updatedAt: now });
   return id;
 }
 
@@ -39,8 +39,7 @@ async function seedCampaign(db: Db, workspaceId: string, name = "Launch"): Promi
   const id = randomUUID();
   const now = Date.now();
   await db.insert(campaigns)
-    .values({ id, workspaceId, name, createdAt: now, updatedAt: now })
-    .run();
+    .values({ id, workspaceId, name, createdAt: now, updatedAt: now });
   return id;
 }
 
@@ -116,8 +115,7 @@ async function seedAction(
       authorizedAt: null,
       dispatchedAt: null,
       completedAt: null,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -160,7 +158,7 @@ function runtimeWithAuthorize(
 
 describe("authorization batches", () => {
   it("snapshots selected actions in caller order with durable exclusions and idempotency", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const otherWorkspaceId = await seedWorkspace(db, "Other Lab");
     const firstId = await seedAction(db, workspaceId, { summary: "First impact" });
@@ -198,7 +196,7 @@ describe("authorization batches", () => {
   });
 
   it("bounds campaign previews at 100 and reports the continuation count", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const campaignId = await seedCampaign(db, workspaceId);
     const ids = await Array.from({ length: 112 }, async (_, index) =>
@@ -228,7 +226,7 @@ describe("authorization batches", () => {
   });
 
   it("persists partial outcomes and makes repeated confirmation idempotent", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const firstId = await seedAction(db, workspaceId);
     const secondId = await seedAction(db, workspaceId);
@@ -260,7 +258,7 @@ describe("authorization batches", () => {
   });
 
   it("resumes only pending items after an interrupted running batch", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const firstId = await seedAction(db, workspaceId);
     const secondId = await seedAction(db, workspaceId);
@@ -277,16 +275,14 @@ describe("authorization batches", () => {
     const firstSubmission = succeededSubmission((await getExternalAction(db, workspaceId, firstId))!);
     await db.update(externalActionBatches)
       .set({ status: "running", confirmedAt: Date.now() })
-      .where(eq(externalActionBatches.id, preview.batch.id))
-      .run();
+      .where(eq(externalActionBatches.id, preview.batch.id));
     await db.update(externalActionBatchItems)
       .set({
         status: "succeeded",
         submissionJson: JSON.stringify(firstSubmission),
         processedAt: Date.now(),
       })
-      .where(eq(externalActionBatchItems.id, firstItem.id))
-      .run();
+      .where(eq(externalActionBatchItems.id, firstItem.id));
     const authorize = vi.fn(async (actionId: string) =>
       succeededSubmission((await getExternalAction(db, workspaceId, actionId))!),
     );
@@ -305,7 +301,7 @@ describe("authorization batches", () => {
   });
 
   it("preserves the coordinator's canonical stale outcome", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const actionId = await seedAction(db, workspaceId);
     const preview = await createAuthorizationBatchPreview(
@@ -350,7 +346,7 @@ describe("authorization batches", () => {
   });
 
   it("exposes create, detail, and authorize routes with workspace isolation", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const app = await buildAuthedApp({ db });
     const workspace = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Route Lab" } });
     const workspaceId = workspace.json().id as string;

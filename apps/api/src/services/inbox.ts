@@ -101,8 +101,7 @@ async function publishedPublications(db: Db, workspaceId: string, connectionId: 
         eq(publications.status, "published"),
         isNotNull(publications.externalId),
       ),
-    )
-    .all();
+    );
 }
 
 /** Ids of replies we've already posted — so the poller never re-ingests our own. */
@@ -110,18 +109,16 @@ async function knownPostedReplyIds(db: Db, workspaceId: string): Promise<Set<str
   const rows = await db
     .select({ id: inboxItems.postedReplyExternalId })
     .from(inboxItems)
-    .where(and(eq(inboxItems.workspaceId, workspaceId), isNotNull(inboxItems.postedReplyExternalId)))
-    .all();
+    .where(and(eq(inboxItems.workspaceId, workspaceId), isNotNull(inboxItems.postedReplyExternalId)));
   return new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
 }
 
 export async function inboxItemExists(db: Db, connectionId: string, externalId: string): Promise<boolean> {
   return (
-    await db
+    (await db
       .select({ id: inboxItems.id })
       .from(inboxItems)
-      .where(and(eq(inboxItems.connectionId, connectionId), eq(inboxItems.externalId, externalId)))
-      .get() !== undefined
+      .where(and(eq(inboxItems.connectionId, connectionId), eq(inboxItems.externalId, externalId))))[0] !== undefined
   );
 }
 
@@ -158,8 +155,7 @@ export async function insertInboxItem(db: Db, fields: NewInboxItem): Promise<boo
       postedReplyUrl: null,
       createdAt: now,
       updatedAt: now,
-    })
-    .run();
+    });
   return true;
 }
 
@@ -174,8 +170,7 @@ async function outboundDmHandles(db: Db, workspaceId: string): Promise<string[]>
         eq(launchMessages.channel, "x"),
         isNotNull(launchMessages.recipientHandle),
       ),
-    )
-    .all();
+    );
   const handles = new Set<string>();
   for (const r of rows) {
     const h = r.handle?.trim();
@@ -189,7 +184,7 @@ async function latestLaunchMessageIdForHandle(
   workspaceId: string,
   handle: string,
 ): Promise<string | null> {
-  const row = await db
+  const row = (await db
     .select({ id: launchMessages.id })
     .from(launchMessages)
     .where(
@@ -199,14 +194,13 @@ async function latestLaunchMessageIdForHandle(
         eq(launchMessages.recipientHandle, handle),
       ),
     )
-    .orderBy(desc(launchMessages.createdAt))
-    .get();
+    .orderBy(desc(launchMessages.createdAt)))[0];
   return row?.id ?? null;
 }
 
 /** Newest inbound DM we've recorded from a handle on this connection. */
 async function newestDmCreatedAt(db: Db, connectionId: string, handle: string): Promise<number> {
-  const row = await db
+  const row = (await db
     .select({ createdAt: inboxItems.externalCreatedAt })
     .from(inboxItems)
     .where(
@@ -216,34 +210,31 @@ async function newestDmCreatedAt(db: Db, connectionId: string, handle: string): 
         eq(inboxItems.authorHandle, handle),
       ),
     )
-    .orderBy(desc(inboxItems.externalCreatedAt))
-    .get();
+    .orderBy(desc(inboxItems.externalCreatedAt)))[0];
   return row?.createdAt ?? 0;
 }
 
 /** The sent email delivery behind a kind:"email" inbox item (Sprint 47). */
 async function deliveryBehindItem(db: Db, item: InboxItem) {
   if (!item.emailDeliveryId) return undefined;
-  return await db
+  return (await db
     .select()
     .from(emailDeliveries)
-    .where(eq(emailDeliveries.id, item.emailDeliveryId))
-    .get();
+    .where(eq(emailDeliveries.id, item.emailDeliveryId)))[0];
 }
 
 /** The original draft behind an inbox item (the post/DM/email it replies to). */
 async function draftBehindItem(db: Db, item: InboxItem) {
   if (item.publicationId) {
-    const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
-    if (pub) return await db.select().from(drafts).where(eq(drafts.id, pub.draftId)).get();
+    const pub = (await db.select().from(publications).where(eq(publications.id, item.publicationId)))[0];
+    if (pub) return (await db.select().from(drafts).where(eq(drafts.id, pub.draftId)))[0];
   }
   if (item.launchMessageId) {
-    const lm = await db
+    const lm = (await db
       .select()
       .from(launchMessages)
-      .where(eq(launchMessages.id, item.launchMessageId))
-      .get();
-    if (lm?.draftId) return await db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
+      .where(eq(launchMessages.id, item.launchMessageId)))[0];
+    if (lm?.draftId) return (await db.select().from(drafts).where(eq(drafts.id, lm.draftId)))[0];
   }
   if (item.emailDeliveryId) {
     const delivery = await deliveryBehindItem(db, item);
@@ -251,14 +242,13 @@ async function draftBehindItem(db: Db, item: InboxItem) {
       // launch_message deliveries point at the message; drafts are the origin
       // for outbound_draft/pr_draft sends (the Sprint 47 send surface).
       if (delivery.origin === "launch_message") {
-        const lm = await db
+        const lm = (await db
           .select()
           .from(launchMessages)
-          .where(eq(launchMessages.id, delivery.originId))
-          .get();
-        if (lm?.draftId) return await db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
+          .where(eq(launchMessages.id, delivery.originId)))[0];
+        if (lm?.draftId) return (await db.select().from(drafts).where(eq(drafts.id, lm.draftId)))[0];
       } else {
-        return await db.select().from(drafts).where(eq(drafts.id, delivery.originId)).get();
+        return (await db.select().from(drafts).where(eq(drafts.id, delivery.originId)))[0];
       }
     }
   }
@@ -273,7 +263,7 @@ export async function replyContext(db: Db, workspaceId: string, item: InboxItem)
   const persona = draft?.personaId ? await getPersona(db, workspaceId, draft.personaId) : undefined;
   let post: { title: string; content: string } | undefined;
   if (item.publicationId) {
-    const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+    const pub = (await db.select().from(publications).where(eq(publications.id, item.publicationId)))[0];
     if (pub) post = { title: pub.title, content: draft?.content ?? "" };
   } else if (item.emailDeliveryId) {
     // The exact sent email (subject + authorized body) is the conversation anchor.
@@ -292,13 +282,12 @@ export async function replyContext(db: Db, workspaceId: string, item: InboxItem)
 
 async function metricExists(db: Db, publicationId: string, window: PublicationMetricWindow): Promise<boolean> {
   return (
-    await db
+    (await db
       .select({ id: publicationMetrics.id })
       .from(publicationMetrics)
       .where(
         and(eq(publicationMetrics.publicationId, publicationId), eq(publicationMetrics.window, window)),
-      )
-      .get() !== undefined
+      ))[0] !== undefined
   );
 }
 
@@ -316,8 +305,7 @@ export async function listPublicationMetrics(
         eq(publicationMetrics.publicationId, publicationId),
       ),
     )
-    .orderBy(asc(publicationMetrics.capturedAt))
-    .all())
+    .orderBy(asc(publicationMetrics.capturedAt)))
     .map(rowToMetric);
 }
 
@@ -327,8 +315,7 @@ export async function metricsByPublication(db: Db, workspaceId: string): Promise
     .select()
     .from(publicationMetrics)
     .where(eq(publicationMetrics.workspaceId, workspaceId))
-    .orderBy(asc(publicationMetrics.capturedAt))
-    .all();
+    .orderBy(asc(publicationMetrics.capturedAt));
   const byPub = new Map<string, PublicationMetric[]>();
   for (const row of rows) {
     const list = byPub.get(row.publicationId) ?? [];
@@ -355,8 +342,7 @@ async function countConnectionRepliesForDay(db: Db, connectionId: string, dayMs:
         gte(inboxItems.updatedAt, start),
         lt(inboxItems.updatedAt, end),
       ),
-    )
-    .all()).length;
+    )).length;
 }
 
 type ReplyGuardrailCheck =
@@ -405,7 +391,7 @@ async function pollInbox(
         polled += 1;
         try {
           const replies = await adapter.fetchReplies({ externalId: pub.externalId, target: pub.target });
-          const draft = await db.select().from(drafts).where(eq(drafts.id, pub.draftId)).get();
+          const draft = (await db.select().from(drafts).where(eq(drafts.id, pub.draftId)))[0];
           const channel = (draft?.channel as Channel) ?? "web";
           for (const r of replies) {
             if (posted.has(r.externalId)) continue;
@@ -501,8 +487,7 @@ async function refreshEngagement(
               clicks: eng.clicks ?? null,
               capturedAt: nowMs,
               createdAt: nowMs,
-            })
-            .run();
+            });
           // Sprint 55 dual-write: cumulative facts into the unified table.
           // periodStart is the publication's publishedAt — the window measures
           // cumulative totals since going live, observed at >= 24h/7d of age.
@@ -566,8 +551,7 @@ async function runReplyOrchestrator(
         inArray(inboxItems.status, ["unread", "read"]),
       ),
     )
-    .orderBy(asc(inboxItems.externalCreatedAt))
-    .all())
+    .orderBy(asc(inboxItems.externalCreatedAt)))
     .map(rowToInboxItem);
 
   // Budget degradation (Sprint 59): items stay unread and a later tick
@@ -591,8 +575,7 @@ async function runReplyOrchestrator(
       );
       await db.update(inboxItems)
         .set({ replyDraftId: draft.id, updatedAt: Date.now() })
-        .where(eq(inboxItems.id, item.id))
-        .run();
+        .where(eq(inboxItems.id, item.id));
       repliesGenerated += 1;
       await applyDraftAction(db, draft, "approve", SYSTEM_ACTOR);
       repliesAutoApproved += 1;
@@ -633,7 +616,7 @@ export async function postReplyForItem(
   if (item.kind === "dm") {
     target = item.authorHandle;
   } else if (item.publicationId) {
-    const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+    const pub = (await db.select().from(publications).where(eq(publications.id, item.publicationId)))[0];
     target = pub?.externalId ?? undefined;
   }
   const result = await adapter.postReply({ parentExternalId: item.externalId, body, target });
@@ -644,8 +627,7 @@ export async function postReplyForItem(
       postedReplyUrl: result.url || null,
       updatedAt: Date.now(),
     })
-    .where(eq(inboxItems.id, item.id))
-    .run();
+    .where(eq(inboxItems.id, item.id));
   await emitEvent(db, fetcher, workspace.id, "reply.posted", {
     inboxItemId: item.id,
     providerKey: item.providerKey,
@@ -672,8 +654,7 @@ async function postApprovedReplies(
         isNotNull(inboxItems.replyDraftId),
         isNull(inboxItems.postedReplyExternalId),
       ),
-    )
-    .all())
+    ))
     .map(rowToInboxItem);
 
   for (const item of items) {
@@ -715,8 +696,7 @@ export async function listInbox(
     .select()
     .from(inboxItems)
     .where(and(...conditions))
-    .orderBy(desc(inboxItems.externalCreatedAt))
-    .all();
+    .orderBy(desc(inboxItems.externalCreatedAt));
   return await Promise.all(rows.map(async (row) => {
       const item = rowToInboxItem(row);
       let replyDraft: InboxItemWithContext["replyDraft"] = null;
@@ -726,7 +706,7 @@ export async function listInbox(
       }
       let post: InboxItemWithContext["post"] = null;
       if (item.publicationId) {
-        const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+        const pub = (await db.select().from(publications).where(eq(publications.id, item.publicationId)))[0];
         if (pub) post = { publicationId: pub.id, title: pub.title, url: pub.externalUrl };
       }
       let sentEmail: InboxItemWithContext["sentEmail"] = null;
@@ -741,11 +721,10 @@ export async function listInbox(
 }
 
 export async function getInboxItem(db: Db, workspaceId: string, itemId: string): Promise<InboxItem | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(inboxItems)
-    .where(and(eq(inboxItems.workspaceId, workspaceId), eq(inboxItems.id, itemId)))
-    .get();
+    .where(and(eq(inboxItems.workspaceId, workspaceId), eq(inboxItems.id, itemId))))[0];
   return row ? rowToInboxItem(row) : undefined;
 }
 
@@ -759,8 +738,7 @@ export async function setInboxStatus(
   if (!item) return undefined;
   await db.update(inboxItems)
     .set({ status, updatedAt: Date.now() })
-    .where(eq(inboxItems.id, itemId))
-    .run();
+    .where(eq(inboxItems.id, itemId));
   return { ...item, status };
 }
 
@@ -797,8 +775,7 @@ export async function generateReplyForItem(
       status: item.status === "unread" ? "read" : item.status,
       updatedAt: Date.now(),
     })
-    .where(eq(inboxItems.id, item.id))
-    .run();
+    .where(eq(inboxItems.id, item.id));
   return draft;
 }
 

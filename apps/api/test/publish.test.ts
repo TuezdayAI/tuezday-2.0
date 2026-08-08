@@ -388,7 +388,7 @@ describe("social publishing API", () => {
     state = fabricState();
     received = [];
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),
       fetcher: webhookFetcher(received),

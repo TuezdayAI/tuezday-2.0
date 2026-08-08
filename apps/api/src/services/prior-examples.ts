@@ -86,8 +86,7 @@ async function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Prom
         isNotNull(approvalDecisions.reason),
       ),
     )
-    .orderBy(desc(approvalDecisions.createdAt))
-    .all();
+    .orderBy(desc(approvalDecisions.createdAt));
   for (const row of decisionRows) {
     if (!reasons.has(row.draftId) && row.reason) {
       reasons.set(row.draftId, clip(row.reason, REASON_CHARS));
@@ -107,8 +106,7 @@ async function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Prom
         inArray(draftRevisionTurns.draftId, missing),
       ),
     )
-    .orderBy(draftRevisionTurns.createdAt)
-    .all();
+    .orderBy(draftRevisionTurns.createdAt);
   for (const turn of turns) {
     if (!reasons.has(turn.draftId)) {
       reasons.set(turn.draftId, clip(turn.instruction, REASON_CHARS));

@@ -41,15 +41,14 @@ describe("background job runner", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await db.insert(workspaces)
       .values({
         id: WORKSPACE_ID,
         name: "Runner",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
   });
 
   it("reconciles, admits, fairly claims, and completes a bounded tick", async () => {
@@ -89,8 +88,7 @@ describe("background job runner", () => {
     });
     await db.update(backgroundJobs)
       .set({ payloadJson: "{" })
-      .where(eq(backgroundJobs.id, job.id))
-      .run();
+      .where(eq(backgroundJobs.id, job.id));
 
     const result = await runBackgroundJobTick({
       db,
@@ -101,7 +99,7 @@ describe("background job runner", () => {
     });
     expect(result).toMatchObject({ claimed: 1, deadLettered: 1 });
     expect(
-      await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, job.id)).get(),
+      (await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, job.id)))[0],
     ).toMatchObject({ status: "dead_letter", activeKey: null });
     expect(
       Object.values(handlers).every(
@@ -168,8 +166,7 @@ describe("background job runner", () => {
     handlers.evidence = vi.fn<BackgroundJobHandler>(async (_payload, context) => {
       await db.update(backgroundJobs)
         .set({ leaseVersion: context.claim.leaseVersion + 1 })
-        .where(eq(backgroundJobs.id, context.claim.id))
-        .run();
+        .where(eq(backgroundJobs.id, context.claim.id));
       return { status: "complete" as const };
     });
     await enqueueBackgroundJob(db, {

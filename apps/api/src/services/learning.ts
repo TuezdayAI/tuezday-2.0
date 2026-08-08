@@ -42,8 +42,7 @@ export async function gatherOutreachSignal(db: Db, workspaceId: string): Promise
   const sequences = await db
     .select({ id: outreachSequences.id, name: outreachSequences.name })
     .from(outreachSequences)
-    .where(eq(outreachSequences.workspaceId, workspaceId))
-    .all();
+    .where(eq(outreachSequences.workspaceId, workspaceId));
   const lines: string[] = [];
   const totals = { sequences: 0, sent: 0, replied: 0, positive: 0, meetings: 0, won: 0 };
   for (const seq of sequences) {
@@ -89,8 +88,7 @@ export async function listTrainingExamples(db: Db, workspaceId: string): Promise
     .select()
     .from(generations)
     .where(and(eq(generations.workspaceId, workspaceId), isNotNull(generations.rating)))
-    .orderBy(desc(generations.createdAt))
-    .all())
+    .orderBy(desc(generations.createdAt)))
     // Generations submitted as drafts get their learning signal from the
     // draft decision instead — avoid double counting.
     .map((g) => ({
@@ -112,8 +110,7 @@ export async function listTrainingExamples(db: Db, workspaceId: string): Promise
     .select()
     .from(drafts)
     .where(eq(drafts.workspaceId, workspaceId))
-    .orderBy(desc(drafts.createdAt))
-    .all())
+    .orderBy(desc(drafts.createdAt)))
     .filter((d) => d.state === "approved" || d.state === "rejected")
     .map((d) => ({
       kind: "decision" as const,
@@ -153,8 +150,7 @@ export async function learningStats(db: Db, workspaceId: string): Promise<Learni
   const metricsCount = (await db
     .select({ id: engagementMetrics.id })
     .from(engagementMetrics)
-    .where(eq(engagementMetrics.workspaceId, workspaceId))
-    .all()).length;
+    .where(eq(engagementMetrics.workspaceId, workspaceId))).length;
   return { ratings, decisions, editedCount, metricsCount };
 }
 
@@ -181,7 +177,7 @@ export async function createMetric(db: Db, workspaceId: string, input: CreateMet
     recordedAt: input.recordedAt ?? now,
     createdAt: now,
   };
-  await db.insert(engagementMetrics).values(row).run();
+  await db.insert(engagementMetrics).values(row);
   // Sprint 55 dual-write: land the observed numbers in the unified fact table.
   // Subject is the channel — a manual reading is a channel-level observation
   // (the optional draft link stays on the legacy row, which is never dropped:
@@ -210,11 +206,10 @@ export async function createMetric(db: Db, workspaceId: string, input: CreateMet
   // resolved at write time: the observation was made while the draft belonged
   // to this campaign, and a later draft reassignment does not rewrite history.
   if (row.draftId) {
-    const draft = await db
+    const draft = (await db
       .select({ campaignId: drafts.campaignId })
       .from(drafts)
-      .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, row.draftId)))
-      .get();
+      .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, row.draftId))))[0];
     if (draft?.campaignId) {
       await recordMetrics(db, workspaceId, factOf("campaign", draft.campaignId));
     }
@@ -227,8 +222,7 @@ export async function listMetrics(db: Db, workspaceId: string): Promise<Engageme
     .select()
     .from(engagementMetrics)
     .where(eq(engagementMetrics.workspaceId, workspaceId))
-    .orderBy(desc(engagementMetrics.recordedAt))
-    .all())
+    .orderBy(desc(engagementMetrics.recordedAt)))
     .map(rowToMetric);
 }
 
@@ -248,8 +242,7 @@ export async function listSyntheses(db: Db, workspaceId: string): Promise<NowSyn
     .select()
     .from(nowSyntheses)
     .where(eq(nowSyntheses.workspaceId, workspaceId))
-    .orderBy(desc(nowSyntheses.createdAt))
-    .all())
+    .orderBy(desc(nowSyntheses.createdAt)))
     .map(rowToSynthesis);
 }
 
@@ -258,11 +251,10 @@ export async function getSynthesis(
   workspaceId: string,
   synthesisId: string,
 ): Promise<NowSynthesis | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(nowSyntheses)
-    .where(and(eq(nowSyntheses.workspaceId, workspaceId), eq(nowSyntheses.id, synthesisId)))
-    .get();
+    .where(and(eq(nowSyntheses.workspaceId, workspaceId), eq(nowSyntheses.id, synthesisId))))[0];
   return row ? rowToSynthesis(row) : undefined;
 }
 
@@ -367,7 +359,7 @@ export async function synthesizeNow(
     createdAt: Date.now(),
     decidedAt: null,
   };
-  await db.insert(nowSyntheses).values(row).run();
+  await db.insert(nowSyntheses).values(row);
   return rowToSynthesis(row);
 }
 
@@ -418,8 +410,7 @@ export async function acceptSynthesis(
   const decidedAt = Date.now();
   await db.update(nowSyntheses)
     .set({ status: "accepted", decidedAt })
-    .where(eq(nowSyntheses.id, synthesis.id))
-    .run();
+    .where(eq(nowSyntheses.id, synthesis.id));
   return { synthesis: { ...synthesis, status: "accepted", decidedAt }, nowContent: doc.content };
 }
 
@@ -428,7 +419,6 @@ export async function dismissSynthesis(db: Db, synthesis: NowSynthesis): Promise
   const decidedAt = Date.now();
   await db.update(nowSyntheses)
     .set({ status: "dismissed", decidedAt })
-    .where(eq(nowSyntheses.id, synthesis.id))
-    .run();
+    .where(eq(nowSyntheses.id, synthesis.id));
   return { ...synthesis, status: "dismissed", decidedAt };
 }

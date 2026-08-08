@@ -77,11 +77,10 @@ const SEQUENCE_GEN: Record<SequenceChannel, { taskType: TaskType; channel: Chann
 // ---------------------------------------------------------------------------
 
 async function launchRowById(db: Db, workspaceId: string, launchId: string): Promise<LaunchRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(launches)
-    .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, launchId)))
-    .get();
+    .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, launchId))))[0];
 }
 
 async function stepRows(db: Db, launchId: string): Promise<SequenceStepRow[]> {
@@ -89,8 +88,7 @@ async function stepRows(db: Db, launchId: string): Promise<SequenceStepRow[]> {
     .select()
     .from(sequenceSteps)
     .where(eq(sequenceSteps.launchId, launchId))
-    .orderBy(asc(sequenceSteps.channel), asc(sequenceSteps.stepNumber))
-    .all();
+    .orderBy(asc(sequenceSteps.channel), asc(sequenceSteps.stepNumber));
 }
 
 function rowToStep(row: SequenceStepRow): SequenceStep {
@@ -105,7 +103,7 @@ function rowToStep(row: SequenceStepRow): SequenceStep {
 }
 
 export async function hasSequence(db: Db, launchId: string): Promise<boolean> {
-  return await db.select({ id: sequenceSteps.id }).from(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)).get() !== undefined;
+  return (await db.select({ id: sequenceSteps.id }).from(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)))[0] !== undefined;
 }
 
 export async function listSequenceSteps(db: Db, launchId: string): Promise<SequenceStep[]> {
@@ -144,8 +142,7 @@ export async function listSequenceRecipients(db: Db, launchId: string): Promise<
     .select()
     .from(sequenceRecipients)
     .where(eq(sequenceRecipients.launchId, launchId))
-    .orderBy(asc(sequenceRecipients.channel), asc(sequenceRecipients.recipientName))
-    .all())
+    .orderBy(asc(sequenceRecipients.channel), asc(sequenceRecipients.recipientName)))
     .map((r) => rowToRecipient(r, totals[r.channel] ?? 0));
 }
 
@@ -153,23 +150,21 @@ async function activeRecipientRows(db: Db, launchId: string): Promise<SequenceRe
   return await db
     .select()
     .from(sequenceRecipients)
-    .where(and(eq(sequenceRecipients.launchId, launchId), eq(sequenceRecipients.status, "active")))
-    .all();
+    .where(and(eq(sequenceRecipients.launchId, launchId), eq(sequenceRecipients.status, "active")));
 }
 
 async function updateRecipient(db: Db, id: string, patch: Partial<SequenceRecipientRow>): Promise<void> {
   await db.update(sequenceRecipients)
     .set({ ...patch, updatedAt: Date.now() })
-    .where(eq(sequenceRecipients.id, id))
-    .run();
+    .where(eq(sequenceRecipients.id, id));
 }
 
 async function setLaunchStatus(db: Db, launchId: string, status: LaunchStatus): Promise<void> {
-  await db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
+  await db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId));
 }
 
 async function currentMessage(db: Db, sequenceRecipientId: string, stepNumber: number) {
-  return await db
+  return (await db
     .select()
     .from(launchMessages)
     .where(
@@ -177,13 +172,12 @@ async function currentMessage(db: Db, sequenceRecipientId: string, stepNumber: n
         eq(launchMessages.sequenceRecipientId, sequenceRecipientId),
         eq(launchMessages.stepNumber, stepNumber),
       ),
-    )
-    .get();
+    ))[0];
 }
 
 async function draftRow(db: Db, draftId: string | null): Promise<DraftRow | undefined> {
   if (!draftId) return undefined;
-  return await db.select().from(drafts).where(eq(drafts.id, draftId)).get();
+  return (await db.select().from(drafts).where(eq(drafts.id, draftId)))[0];
 }
 
 /** The bodies of the recipient's earlier steps, so a follow-up never repeats them. */
@@ -193,8 +187,7 @@ async function priorBodies(db: Db, sequenceRecipientId: string, beforeStep: numb
     .from(launchMessages)
     .leftJoin(drafts, eq(launchMessages.draftId, drafts.id))
     .where(eq(launchMessages.sequenceRecipientId, sequenceRecipientId))
-    .orderBy(asc(launchMessages.stepNumber))
-    .all();
+    .orderBy(asc(launchMessages.stepNumber));
   return rows
     .filter(({ message }) => message.stepNumber < beforeStep)
     .map(({ draft }) => draft?.content ?? "")
@@ -222,7 +215,7 @@ export async function setSequence(
     if (!launchChannels.includes(step.channel)) return { ok: false, error: "channel_not_in_launch" };
   }
   const now = Date.now();
-  await db.delete(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)).run();
+  await db.delete(sequenceSteps).where(eq(sequenceSteps.launchId, launchId));
   for (const step of input.steps) {
     await db.insert(sequenceSteps)
       .values({
@@ -235,8 +228,7 @@ export async function setSequence(
         delayHours: step.delayHours,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
   }
   return { ok: true, steps: await listSequenceSteps(db, launchId) };
 }
@@ -268,8 +260,7 @@ export async function countConnectionDmsForDay(db: Db, connectionId: string, day
         gte(launchMessages.sentAt, start),
         lt(launchMessages.sentAt, end),
       ),
-    )
-    .all()).length;
+    )).length;
 }
 
 /** A reply we can observe stops the chain. Only X DMs have an inbound feed
@@ -287,8 +278,7 @@ export async function hasInboundReply(
     .from(inboxItems)
     .where(
       and(eq(inboxItems.workspaceId, workspaceId), eq(inboxItems.kind, "dm"), eq(inboxItems.channel, "x")),
-    )
-    .all();
+    );
   return rows.some(
     (r) => r.authorHandle.replace(/^@+/, "").toLowerCase() === norm && r.externalCreatedAt > sinceMs,
   );
@@ -396,8 +386,7 @@ async function generateStepMessage(
         connectionId: null,
         createdAt: nowMs,
         updatedAt: nowMs,
-      })
-      .run();
+      });
   };
 
   try {
@@ -494,8 +483,7 @@ async function generateStepMessage(
         connectionId: null,
         createdAt: nowMs,
         updatedAt: nowMs,
-      })
-      .run();
+      });
     return { ok: true, draft, messageId };
   } catch (err) {
     // A bad generation never aborts the run — record a failed message and move on.
@@ -518,7 +506,7 @@ async function proposeEmailSend(
   messageId: string,
   nowMs: number,
 ): Promise<DispatchResult> {
-  const message = await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const message = (await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)))[0];
   const draft = message ? await draftRow(ctx.db, message.draftId) : undefined;
   if (!message || !draft) return { sent: false, error: "message_missing" };
   const baseKey = deriveEmailSendIdempotencyKey(message.id, {
@@ -562,9 +550,8 @@ async function proposeEmailSend(
 
   await ctx.db.update(launchMessages)
     .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
-    .where(eq(launchMessages.id, message.id))
-    .run();
-  const after = await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, message.id)).get();
+    .where(eq(launchMessages.id, message.id));
+  const after = (await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, message.id)))[0];
   return {
     sent: submission.action.status === "succeeded" && after?.status === "sent",
     sentAt: after?.sentAt ?? nowMs,
@@ -589,8 +576,7 @@ async function proposeXSend(
     await ctx.db
       .update(launchMessages)
       .set({ status: "failed", lastError: "No connected X account for this launch.", updatedAt: nowMs })
-      .where(eq(launchMessages.id, messageId))
-      .run();
+      .where(eq(launchMessages.id, messageId));
     return { sent: false, blocked: "no_connection" };
   }
   if (enforceGuardrails) {
@@ -600,7 +586,7 @@ async function proposeXSend(
       return { sent: false, blocked: "connection_cap" };
     }
   }
-  const message = await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const message = (await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)))[0];
   const draft = message ? await draftRow(ctx.db, message.draftId) : undefined;
   if (!message || !draft) return { sent: false, error: "message_missing" };
   try {
@@ -614,11 +600,10 @@ async function proposeXSend(
       automated: launch.automationMode === "scheduled_auto",
     });
     const submission = await ctx.runtime.propose(command, SYSTEM_ACTOR);
-    const after = await ctx.db
+    const after = (await ctx.db
       .select()
       .from(launchMessages)
-      .where(eq(launchMessages.id, messageId))
-      .get();
+      .where(eq(launchMessages.id, messageId)))[0];
     if (submission.action.status === "succeeded" && after?.status === "sent") {
       return { sent: true, sentAt: after.sentAt ?? nowMs };
     }
@@ -736,13 +721,12 @@ async function advanceRecipient(
 
 /** Flip a sequence launch to completed once no recipient is still active. */
 async function maybeCompleteSequenceLaunch(db: Db, launchId: string): Promise<void> {
-  const active = await db
+  const active = (await db
     .select({ id: sequenceRecipients.id })
     .from(sequenceRecipients)
-    .where(and(eq(sequenceRecipients.launchId, launchId), eq(sequenceRecipients.status, "active")))
-    .get();
+    .where(and(eq(sequenceRecipients.launchId, launchId), eq(sequenceRecipients.status, "active"))))[0];
   if (!active) {
-    const any = await db.select({ id: sequenceRecipients.id }).from(sequenceRecipients).where(eq(sequenceRecipients.launchId, launchId)).get();
+    const any = (await db.select({ id: sequenceRecipients.id }).from(sequenceRecipients).where(eq(sequenceRecipients.launchId, launchId)))[0];
     if (any) await setLaunchStatus(db, launchId, "completed");
   }
 }
@@ -807,7 +791,7 @@ export async function startSequence(
     for (const member of audience.members) {
       const handle = member.xHandle?.trim();
       if (channel === "x" && !handle) continue; // no handle → not enrolled in the X chain
-      const exists = await db
+      const exists = (await db
         .select({ id: sequenceRecipients.id })
         .from(sequenceRecipients)
         .where(
@@ -817,8 +801,7 @@ export async function startSequence(
             eq(sequenceRecipients.recipientType, member.type),
             eq(sequenceRecipients.recipientId, member.id),
           ),
-        )
-        .get();
+        ))[0];
       if (exists) continue;
       await db.insert(sequenceRecipients)
         .values({
@@ -838,8 +821,7 @@ export async function startSequence(
           stoppedReason: null,
           createdAt: now,
           updatedAt: now,
-        })
-        .run();
+        });
       acc.enrolled += 1;
     }
   }
@@ -886,8 +868,7 @@ export async function runSequences(
       (await db
         .select({ launchId: sequenceSteps.launchId })
         .from(sequenceSteps)
-        .where(eq(sequenceSteps.workspaceId, workspaceId))
-        .all())
+        .where(eq(sequenceSteps.workspaceId, workspaceId)))
         .map((r) => r.launchId),
     ),
   ];

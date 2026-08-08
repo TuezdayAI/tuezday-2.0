@@ -58,7 +58,8 @@ export async function createShadowPair(
     runId: string;
   },
 ): Promise<PipelineShadowPairRow> {
-  const row: PipelineShadowPairRow = {
+  // `seq` is assigned by the database, so the written row is read back.
+  const row: typeof pipelineShadowPairs.$inferInsert = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
     pairKey: input.pairKey,
@@ -73,8 +74,7 @@ export async function createShadowPair(
     verdictAt: null,
     createdAt: Date.now(),
   };
-  await db.insert(pipelineShadowPairs).values(row).run();
-  return row;
+  return (await db.insert(pipelineShadowPairs).values(row).returning())[0]!;
 }
 
 function proposalContentOf(resultJson: string | null): string | null {
@@ -132,8 +132,7 @@ export async function listShadowPairs(
     .leftJoin(drafts, eq(pipelineShadowPairs.draftId, drafts.id))
     .where(and(...conditions))
     .orderBy(desc(pipelineShadowPairs.createdAt), desc(pipelineShadowPairs.seq))
-    .limit(Math.min(options.limit ?? 50, 100))
-    .all())
+    .limit(Math.min(options.limit ?? 50, 100)))
     .map((row) =>
       toPair(
         row.pair,
@@ -150,11 +149,10 @@ export async function recordShadowVerdict(
   input: ShadowVerdictInput,
   actor: { userId: string | null },
 ): Promise<PipelineShadowPair | undefined> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(pipelineShadowPairs)
-    .where(and(eq(pipelineShadowPairs.workspaceId, workspaceId), eq(pipelineShadowPairs.id, pairId)))
-    .get();
+    .where(and(eq(pipelineShadowPairs.workspaceId, workspaceId), eq(pipelineShadowPairs.id, pairId))))[0];
   if (!existing) return undefined;
   await db.update(pipelineShadowPairs)
     .set({
@@ -163,8 +161,7 @@ export async function recordShadowVerdict(
       verdictByUserId: actor.userId,
       verdictAt: Date.now(),
     })
-    .where(eq(pipelineShadowPairs.id, pairId))
-    .run();
+    .where(eq(pipelineShadowPairs.id, pairId));
   const [pair] = await listShadowPairsById(db, workspaceId, pairId);
   return pair;
 }
@@ -181,8 +178,7 @@ async function listShadowPairsById(db: Db, workspaceId: string, pairId: string):
     .from(pipelineShadowPairs)
     .innerJoin(pipelineRuns, eq(pipelineShadowPairs.runId, pipelineRuns.id))
     .leftJoin(drafts, eq(pipelineShadowPairs.draftId, drafts.id))
-    .where(and(eq(pipelineShadowPairs.workspaceId, workspaceId), eq(pipelineShadowPairs.id, pairId)))
-    .all())
+    .where(and(eq(pipelineShadowPairs.workspaceId, workspaceId), eq(pipelineShadowPairs.id, pairId))))
     .map((row) =>
       toPair(
         row.pair,
@@ -229,11 +225,10 @@ function draftMetrics(rows: Pick<DraftRow, "state" | "originalContent" | "conten
 /** The workspace's generation path, read directly so this module never imports
  * the automation orchestrator (which imports this one). */
 export async function getGenerationPath(db: Db, workspaceId: string): Promise<AutomationGenerationPath> {
-  const row = await db
+  const row = (await db
     .select({ generationPath: socialAutomationSettings.generationPath })
     .from(socialAutomationSettings)
-    .where(eq(socialAutomationSettings.workspaceId, workspaceId))
-    .get();
+    .where(eq(socialAutomationSettings.workspaceId, workspaceId)))[0];
   return (row?.generationPath ?? "legacy") as AutomationGenerationPath;
 }
 
@@ -244,8 +239,7 @@ async function setGenerationPath(db: Db, workspaceId: string, path: AutomationGe
     .onConflictDoUpdate({
       target: socialAutomationSettings.workspaceId,
       set: { generationPath: path, updatedAt: now },
-    })
-    .run();
+    });
 }
 
 export async function getAutomationComparison(
@@ -271,12 +265,11 @@ export async function getAutomationComparison(
         isNotNull(drafts.automationKey),
         gte(drafts.createdAt, since),
       ),
-    )
-    .all();
+    );
   // Caveat stated on the wire schema: this sum includes founder-triggered
   // manual signal drafts — the legacy path has no per-draft cost attribution.
   const legacyCost =
-    (await db
+    ((await db
       .select({ total: sql<number>`coalesce(sum(${llmUsageEvents.costCents}), 0)` })
       .from(llmUsageEvents)
       .where(
@@ -285,8 +278,7 @@ export async function getAutomationComparison(
           inArray(llmUsageEvents.pipeline, ["signal_draft", "review"]),
           gte(llmUsageEvents.createdAt, since),
         ),
-      )
-      .get())?.total ?? 0;
+      ))[0])?.total ?? 0;
 
   // Engine side: live + shadow runs in the window (dry runs are founder
   // experiments, not the A/B), drafts joined from the live runs' gate handoff.
@@ -304,8 +296,7 @@ export async function getAutomationComparison(
         inArray(pipelineRuns.mode, ["live", "shadow"]),
         gte(pipelineRuns.createdAt, since),
       ),
-    )
-    .all();
+    );
   const engineDraftIds = engineRuns
     .filter((run) => run.mode === "live" && run.draftId !== null)
     .map((run) => run.draftId!);
@@ -319,7 +310,6 @@ export async function getAutomationComparison(
           })
           .from(drafts)
           .where(and(eq(drafts.workspaceId, workspaceId), inArray(drafts.id, engineDraftIds)))
-          .all()
       : [];
 
   const pairs = await db
@@ -330,8 +320,7 @@ export async function getAutomationComparison(
         eq(pipelineShadowPairs.workspaceId, workspaceId),
         gte(pipelineShadowPairs.createdAt, since),
       ),
-    )
-    .all();
+    );
 
   return {
     workspaceId,
@@ -398,8 +387,7 @@ export async function recordRolloutDecision(
       metricsJson: JSON.stringify(metrics),
       decidedByUserId: record.decidedByUserId,
       createdAt: record.createdAt,
-    })
-    .run();
+    });
   await setGenerationPath(db, workspaceId, PATH_FOR_DECISION[input.decision]);
   return record;
 }
@@ -409,8 +397,7 @@ export async function listRolloutDecisions(db: Db, workspaceId: string): Promise
     .select()
     .from(pipelineRolloutDecisions)
     .where(eq(pipelineRolloutDecisions.workspaceId, workspaceId))
-    .orderBy(desc(pipelineRolloutDecisions.createdAt), desc(pipelineRolloutDecisions.seq))
-    .all())
+    .orderBy(desc(pipelineRolloutDecisions.createdAt), desc(pipelineRolloutDecisions.seq)))
     .map((row) => ({
       id: row.id,
       workspaceId: row.workspaceId,

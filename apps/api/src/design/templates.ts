@@ -32,7 +32,7 @@ export async function getOrAuthorTemplate(
   input: TemplateLookup,
 ): Promise<DesignTemplateRow> {
   const fingerprint = designSystemFingerprint(input.resolvedDesignMarkdown);
-  const existing = await db
+  const existing = (await db
     .select()
     .from(designTemplates)
     .where(
@@ -43,8 +43,7 @@ export async function getOrAuthorTemplate(
         eq(designTemplates.designSystemFingerprint, fingerprint),
         eq(designTemplates.slideShape, input.slideShape),
       ),
-    )
-    .get();
+    ))[0];
   if (existing) return existing;
 
   const authored = await provider.authorTemplate({
@@ -66,6 +65,6 @@ export async function getOrAuthorTemplate(
     placeholders: JSON.stringify(authored.placeholders),
     createdAt: Date.now(),
   };
-  await db.insert(designTemplates).values(row).run();
+  await db.insert(designTemplates).values(row);
   return row;
 }

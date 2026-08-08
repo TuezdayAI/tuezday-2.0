@@ -15,14 +15,14 @@ let ideasKey: string;
 let draftsKey: string;
 
 beforeAll(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   app = await buildAuthedApp({ db });
   await db.insert(workspaces).values({
     id: WS,
     name: "Public API WS",
     createdAt: Date.now(),
     updatedAt: Date.now(),
-  }).run();
+  });
 
   ideasKey = (await createApiKey(db, WS, { name: "ideas", scopes: ["ideas:write"] })).rawKey;
   draftsKey = (await createApiKey(db, WS, { name: "drafts", scopes: ["drafts:read", "drafts:write"] })).rawKey;
@@ -55,7 +55,7 @@ test("ideas endpoint requires ideas:write", async () => {
 test.each(["persona", "campaign", "both"] as const)(
   "ideas endpoint does not disclose or persist foreign and unknown %s references",
   async (referenceKind) => {
-    const isolatedDb = createTestDb();
+    const isolatedDb = await createTestDb();
     const isolatedApp = await buildAuthedApp({ db: isolatedDb });
     try {
       const targetWorkspaceId = (
@@ -119,15 +119,13 @@ test.each(["persona", "campaign", "both"] as const)(
         await isolatedDb
           .select()
           .from(signals)
-          .where(eq(signals.workspaceId, targetWorkspaceId))
-          .all(),
+          .where(eq(signals.workspaceId, targetWorkspaceId)),
       ).toHaveLength(0);
       expect(
         await isolatedDb
           .select()
           .from(signalMatches)
-          .where(eq(signalMatches.workspaceId, targetWorkspaceId))
-          .all(),
+          .where(eq(signalMatches.workspaceId, targetWorkspaceId)),
       ).toHaveLength(0);
     } finally {
       await isolatedApp.close();
@@ -140,7 +138,7 @@ test.each(["persona", "campaign", "both"] as const)(
 // path, so the same request body produces a real score-100 match — and the
 // response contract callers see is unchanged.
 test("ideas endpoint turns explicit routing into a real score-100 match", async () => {
-  const isolatedDb = createTestDb();
+  const isolatedDb = await createTestDb();
   const isolatedApp = await buildAuthedApp({ db: isolatedDb });
   try {
     const workspaceId = (
@@ -196,8 +194,7 @@ test("ideas endpoint turns explicit routing into a real score-100 match", async 
     const rows = await isolatedDb
       .select()
       .from(signalMatches)
-      .where(eq(signalMatches.signalId, signal.id))
-      .all();
+      .where(eq(signalMatches.signalId, signal.id));
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       personaId: persona.id,
@@ -205,7 +202,7 @@ test("ideas endpoint turns explicit routing into a real score-100 match", async 
       score: 100,
     });
 
-    const stored = (await isolatedDb.select().from(signals).where(eq(signals.id, signal.id)).get())!;
+    const stored = ((await isolatedDb.select().from(signals).where(eq(signals.id, signal.id)))[0])!;
     expect(stored.suggestedPersonaId).toBeNull();
     expect(stored.suggestedCampaignId).toBeNull();
   } finally {

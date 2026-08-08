@@ -8,7 +8,7 @@ import {
   type RoutingPolicyPatch,
   type RoutingProfilePayload,
 } from "@tuezday/contracts";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   audiences,
   campaignRoutingProfiles,
@@ -16,7 +16,6 @@ import {
   type CampaignRoutingProfileRow,
 } from "../db/schema";
 import { getCurrentCampaignPlan } from "./campaign-plans";
-
 /** Guidance is prompt context, not authority — keep the projection bounded. */
 const PROFILE_GUIDANCE_MAX_CHARS = 500;
 
@@ -66,11 +65,10 @@ export async function compileRoutingProfile(
   workspaceId: string,
   campaignId: string,
 ): Promise<CampaignRoutingProfile | undefined> {
-  const campaign = await db
+  const campaign = (await db
     .select()
     .from(campaigns)
-    .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
-    .get();
+    .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId))))[0];
   if (!campaign) return undefined;
   const detail = await getCurrentCampaignPlan(db, workspaceId, campaignId);
   if (!detail) return undefined;
@@ -88,8 +86,7 @@ export async function compileRoutingProfile(
               inArray(audiences.id, audienceIds),
             ),
           )
-          .orderBy(asc(audiences.name))
-          .all())
+          .orderBy(asc(audiences.name)))
           .map((row) => row.name)
       : [];
 
@@ -127,7 +124,7 @@ export async function compileRoutingProfile(
     .digest("hex");
 
   return await db.transaction(async (tx) => {
-    const existing = await tx
+    const existing = (await tx
       .select()
       .from(campaignRoutingProfiles)
       .where(
@@ -136,17 +133,15 @@ export async function compileRoutingProfile(
           eq(campaignRoutingProfiles.planRevisionId, detail.plan.id),
           eq(campaignRoutingProfiles.profileFingerprint, profileFingerprint),
         ),
-      )
-      .get();
+      ))[0];
     if (existing) return rowToRoutingProfile(existing);
-    const latest = await tx
+    const latest = (await tx
       .select({ profileVersion: campaignRoutingProfiles.profileVersion })
       .from(campaignRoutingProfiles)
       .where(eq(campaignRoutingProfiles.campaignId, campaignId))
       .orderBy(desc(campaignRoutingProfiles.profileVersion))
-      .limit(1)
-      .get();
-    const inserted = await tx
+      .limit(1))[0];
+    const inserted = (await tx
       .insert(campaignRoutingProfiles)
       .values({
         id: randomUUID(),
@@ -163,8 +158,7 @@ export async function compileRoutingProfile(
         payloadJson: JSON.stringify(payload),
         createdAt: Date.now(),
       })
-      .returning()
-      .get();
+      .returning())[0]!;
     return rowToRoutingProfile(inserted);
   });
 }
@@ -184,8 +178,7 @@ export async function currentRoutingProfiles(
     .where(
       and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")),
     )
-    .orderBy(asc(campaigns.createdAt), asc(campaigns.id))
-    .all();
+    .orderBy(asc(campaigns.createdAt), asc(campaigns.id));
   const profiles: CampaignRoutingProfile[] = [];
   for (const row of rows) {
     if (row.routingBand === "off") continue;
@@ -214,8 +207,7 @@ export async function latestProfileFingerprints(
         eq(campaignRoutingProfiles.workspaceId, workspaceId),
         inArray(campaignRoutingProfiles.campaignId, campaignIds),
       ),
-    )
-    .all();
+    );
   const latest = new Map<string, { version: number; fingerprint: string }>();
   for (const row of rows) {
     const current = latest.get(row.campaignId);
@@ -267,9 +259,8 @@ export async function updateRoutingPolicy(
       .set(changes)
       .where(
         and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)),
-      )
-      .run();
-    if (result.changes === 0) return { updated: false, profile: undefined };
+      );
+    if (rowsAffected(result) === 0) return { updated: false, profile: undefined };
   }
   return {
     updated: true,

@@ -333,7 +333,7 @@ describe("targeted launch API", () => {
       vi.stubEnv(`${k}_CLIENT_SECRET`, "csecret");
     }
     state = platformState();
-    db = createTestDb();
+    db = await createTestDb();
     emailProvider = new FakeOutboundEmailProvider();
     app = await buildAuthedApp({
       db,
@@ -461,7 +461,7 @@ describe("targeted launch API", () => {
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    }).onConflictDoNothing().run();
+    }).onConflictDoNothing();
   }
 
   async function allowNativeEmail(email: string): Promise<void> {
@@ -477,7 +477,7 @@ describe("targeted launch API", () => {
     }).onConflictDoUpdate({
       target: [emailRecipientPermissions.workspaceId, emailRecipientPermissions.normalizedEmail],
       set: { status: "allowed", updatedAt: now },
-    }).run();
+    });
   }
 
   function detail(launchId: string) {
@@ -579,11 +579,10 @@ describe("targeted launch API", () => {
       jobId: expect.any(String),
     });
     expect(generateMock).not.toHaveBeenCalled();
-    const job = (await db
+    const job = ((await db
       .select()
       .from(backgroundJobs)
-      .where(eq(backgroundJobs.id, queued.json().jobId))
-      .get())!;
+      .where(eq(backgroundJobs.id, queued.json().jobId)))[0])!;
     expect(JSON.parse(job.payloadJson)).toMatchObject({
       kind: "launch_generate",
       workspaceId,
@@ -635,18 +634,17 @@ describe("targeted launch API", () => {
     const interrupted = await runBackgroundJobs();
     expect(interrupted.json()).toMatchObject({ claimed: 1, retried: 1 });
     expect((await detail(launch.id)).launch.status).toBe("generating");
-    expect(await db.select().from(launchMessages).all()).toHaveLength(1);
-    expect(await db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(launchMessages)).toHaveLength(1);
+    expect(await db.select().from(drafts)).toHaveLength(1);
 
     await db.update(backgroundJobs)
       .set({ availableAt: 0 })
-      .where(eq(backgroundJobs.id, queued.json().jobId))
-      .run();
+      .where(eq(backgroundJobs.id, queued.json().jobId));
     const resumed = await runBackgroundJobs();
     expect(resumed.json()).toMatchObject({ claimed: 1, succeeded: 1 });
     expect((await detail(launch.id)).launch.status).toBe("ready");
-    expect(await db.select().from(launchMessages).all()).toHaveLength(2);
-    expect(await db.select().from(drafts).all()).toHaveLength(2);
+    expect(await db.select().from(launchMessages)).toHaveLength(2);
+    expect(await db.select().from(drafts)).toHaveLength(2);
     expect(generateMock).toHaveBeenCalledTimes(3);
   });
 
@@ -704,7 +702,7 @@ describe("targeted launch API", () => {
     ).json();
     expect(neighbourDetail.launch.status).toBe("draft");
     expect(neighbourDetail.launch.messageCount).toBe(0);
-    expect(await db.select().from(launchMessages).all()).toHaveLength(0);
+    expect(await db.select().from(launchMessages)).toHaveLength(0);
   });
 
   it("creates, generates, and shapes messages per channel", async () => {
@@ -784,7 +782,7 @@ describe("targeted launch API", () => {
     const sent = after.messages.find((message: { id: string }) => message.id === emailMessage.id);
     expect(sent.status).toBe("sent");
     expect(sent.externalActionId).toBe(submission.action.id);
-    expect(await db.select().from(emailDeliveries).get()).toMatchObject({
+    expect((await db.select().from(emailDeliveries))[0]).toMatchObject({
       externalActionId: submission.action.id,
       status: "accepted",
     });
@@ -962,8 +960,7 @@ describe("targeted launch API", () => {
     const sentRows = (await db
       .select()
       .from(launchMessages)
-      .where(eq(launchMessages.channel, "x"))
-      .all())
+      .where(eq(launchMessages.channel, "x")))
       .filter((row) => row.status === "sent");
     expect(sentRows.map((row) => row.connectionId)).toEqual([connection.id]);
   });

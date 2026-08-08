@@ -61,14 +61,13 @@ export async function getSequenceFunnel(
   workspaceId: string,
   sequenceId: string,
 ): Promise<OutreachFunnel | undefined> {
-  const sequence = await db
+  const sequence = (await db
     .select()
     .from(outreachSequences)
-    .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId)))
-    .get();
+    .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId))))[0];
   if (!sequence) return undefined;
 
-  const persona = await db.select({ name: personas.name }).from(personas).where(eq(personas.id, sequence.personaId)).get();
+  const persona = (await db.select({ name: personas.name }).from(personas).where(eq(personas.id, sequence.personaId)))[0];
 
   // Enrollments of this sequence → their manual outcomes + recipient type.
   const enrollments = await db
@@ -78,8 +77,7 @@ export async function getSequenceFunnel(
       outcome: outreachEnrollments.outcome,
     })
     .from(outreachEnrollments)
-    .where(eq(outreachEnrollments.sequenceId, sequenceId))
-    .all();
+    .where(eq(outreachEnrollments.sequenceId, sequenceId));
   const enrollmentType = new Map(enrollments.map((e) => [e.id, e.recipientType]));
 
   // Sent step-messages of those enrollments = the funnel's "sent" denominator.
@@ -93,7 +91,6 @@ export async function getSequenceFunnel(
             eq(outreachMessages.status, "sent"),
           ),
         )
-        .all()
     : [];
 
   // Deliveries for those messages (origin=outreach_step, originId=message.id).
@@ -113,7 +110,6 @@ export async function getSequenceFunnel(
             inArray(emailDeliveries.originId, sentMessages.map((m) => m.id)),
           ),
         )
-        .all()
     : [];
   const deliveryByMessageId = new Map(deliveries.map((d) => [d.originId, d]));
 
@@ -129,7 +125,6 @@ export async function getSequenceFunnel(
             inArray(inboxItems.emailDeliveryId, deliveries.map((d) => d.id)),
           ),
         )
-        .all()
     : [];
   const repliedDeliveryIds = new Set<string>();
   const positiveDeliveryIds = new Set<string>();
@@ -199,8 +194,7 @@ export async function getCampaignOutreachFunnel(
   const sequences = await db
     .select({ id: outreachSequences.id })
     .from(outreachSequences)
-    .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.campaignId, campaignId)))
-    .all();
+    .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.campaignId, campaignId)));
 
   const agg: FunnelCounts = { ...EMPTY };
   for (const s of sequences) {

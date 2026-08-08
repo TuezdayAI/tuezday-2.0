@@ -59,7 +59,7 @@ describe("selective context (Sprint 43)", () => {
   let workspaceId: string;
 
   async function setup(llm: LlmGateway = selectiveGateway()) {
-    app = await buildAuthedApp({ db: createTestDb(), llm });
+    app = await buildAuthedApp({ db: await createTestDb(), llm });
     const res = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "S43" } });
     workspaceId = res.json().id;
   }

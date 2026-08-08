@@ -7,7 +7,7 @@ import {
   ne,
   sql,
 } from "drizzle-orm";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   discoveredItemMatches,
   discoveredItems,
@@ -30,8 +30,7 @@ async function promoteCanonicalBeforeDelete(
         eq(discoveredItemMatches.workspaceId, survivor.workspaceId),
         eq(discoveredItemMatches.itemId, survivor.id),
       ),
-    )
-    .run();
+    );
   await tx.update(discoveredItemMatches)
     .set({ itemId: survivor.id })
     .where(
@@ -39,8 +38,7 @@ async function promoteCanonicalBeforeDelete(
         eq(discoveredItemMatches.workspaceId, canonical.workspaceId),
         eq(discoveredItemMatches.itemId, canonical.id),
       ),
-    )
-    .run();
+    );
   await tx.update(discoveredItems)
     .set({
       title: canonical.title,
@@ -68,9 +66,8 @@ async function promoteCanonicalBeforeDelete(
         eq(discoveredItems.workspaceId, survivor.workspaceId),
         eq(discoveredItems.id, survivor.id),
       ),
-    )
-    .run();
-  return (await tx
+    );
+  return rowsAffected((await tx
     .update(discoveredItems)
     .set({
       duplicateOfId: survivor.id,
@@ -87,8 +84,7 @@ async function promoteCanonicalBeforeDelete(
         eq(discoveredItems.duplicateOfId, canonical.id),
         ne(discoveredItems.id, survivor.id),
       ),
-    )
-    .run()).changes;
+    )));
 }
 
 export async function deleteDiscoverySourcePreservingDuplicates(
@@ -98,7 +94,7 @@ export async function deleteDiscoverySourcePreservingDuplicates(
   hooks: DiscoveryDedupeHooks = {},
 ): Promise<boolean> {
   return await db.transaction(async (tx) => {
-    const source = await tx
+    const source = (await tx
       .select({ id: discoverySources.id })
       .from(discoverySources)
       .where(
@@ -106,8 +102,7 @@ export async function deleteDiscoverySourcePreservingDuplicates(
           eq(discoverySources.workspaceId, workspaceId),
           eq(discoverySources.id, sourceId),
         ),
-      )
-      .get();
+      ))[0];
     if (!source) return false;
 
     const canonicals = await tx
@@ -119,10 +114,9 @@ export async function deleteDiscoverySourcePreservingDuplicates(
           eq(discoveredItems.sourceId, sourceId),
           isNull(discoveredItems.duplicateOfId),
         ),
-      )
-      .all();
+      );
     for (const canonical of canonicals) {
-      const survivor = await tx
+      const survivor = (await tx
         .select()
         .from(discoveredItems)
         .where(
@@ -133,8 +127,7 @@ export async function deleteDiscoverySourcePreservingDuplicates(
           ),
         )
         .orderBy(asc(discoveredItems.createdAt), asc(discoveredItems.id))
-        .limit(1)
-        .get();
+        .limit(1))[0];
       if (survivor) {
         await promoteCanonicalBeforeDelete(tx, canonical, survivor);
       }
@@ -142,15 +135,14 @@ export async function deleteDiscoverySourcePreservingDuplicates(
 
     hooks.beforeSourceDelete?.();
     return (
-      (await tx
+      rowsAffected((await tx
         .delete(discoverySources)
         .where(
           and(
             eq(discoverySources.workspaceId, workspaceId),
             eq(discoverySources.id, sourceId),
           ),
-        )
-        .run()).changes === 1
+        ))) === 1
     );
   });
 }
@@ -159,7 +151,7 @@ export async function repairDanglingDuplicateGroups(
   db: Db,
 ): Promise<{ groups: number; promoted: number; repointed: number }> {
   return await db.transaction(async (tx) => {
-    const rows = await tx.select().from(discoveredItems).all();
+    const rows = await tx.select().from(discoveredItems);
     const existing = new Set(
       rows.map((row) => JSON.stringify([row.workspaceId, row.id])),
     );
@@ -192,8 +184,7 @@ export async function repairDanglingDuplicateGroups(
             eq(discoveredItemMatches.workspaceId, survivor.workspaceId),
             inArray(discoveredItemMatches.itemId, ids),
           ),
-        )
-        .run();
+        );
       await tx.update(discoveredItems)
         .set({
           score: null,
@@ -217,13 +208,12 @@ export async function repairDanglingDuplicateGroups(
             eq(discoveredItems.workspaceId, survivor.workspaceId),
             eq(discoveredItems.id, survivor.id),
           ),
-        )
-        .run();
+        );
       promoted += 1;
 
       const remainingIds = ids.slice(1);
       if (remainingIds.length > 0) {
-        repointed += (await tx
+        repointed += rowsAffected((await tx
           .update(discoveredItems)
           .set({
             status: "duplicate",
@@ -239,8 +229,7 @@ export async function repairDanglingDuplicateGroups(
               eq(discoveredItems.workspaceId, survivor.workspaceId),
               inArray(discoveredItems.id, remainingIds),
             ),
-          )
-          .run()).changes;
+          )));
       }
     }
     return {

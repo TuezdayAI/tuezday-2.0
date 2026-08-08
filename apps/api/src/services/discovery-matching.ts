@@ -10,7 +10,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import type { Db, DbExecutor } from "../db";
+import { type Db, type DbExecutor, rowsAffected } from "../db";
 import {
   campaigns,
   discoveredItems,
@@ -71,8 +71,7 @@ async function fingerprintForItem(
     })
     .from(personas)
     .where(eq(personas.workspaceId, workspaceId))
-    .orderBy(asc(personas.id))
-    .all())
+    .orderBy(asc(personas.id)))
     .map((persona) => ({
       id: persona.id,
       name: persona.name,
@@ -93,8 +92,7 @@ async function fingerprintForItem(
         eq(campaigns.status, "active"),
       ),
     )
-    .orderBy(asc(campaigns.id))
-    .all())
+    .orderBy(asc(campaigns.id)))
     .map((campaign) => ({
       id: campaign.id,
       name: campaign.name,
@@ -174,8 +172,7 @@ export async function claimMatchingBatch(
           ),
         ),
       )
-      .orderBy(asc(discoveredItems.createdAt), asc(discoveredItems.id))
-      .all();
+      .orderBy(asc(discoveredItems.createdAt), asc(discoveredItems.id));
     const claims: MatchingClaim[] = [];
     for (const candidate of candidates) {
       if (claims.length >= input.limit) break;
@@ -184,7 +181,7 @@ export async function claimMatchingBatch(
         candidate.workspaceId,
         candidate,
       );
-      const claimed = await tx
+      const claimed = (await tx
         .update(discoveredItems)
         .set({
           matchingState: "running",
@@ -226,9 +223,12 @@ export async function claimMatchingBatch(
           workspaceId: discoveredItems.workspaceId,
           version: discoveredItems.matchingVersion,
           leaseExpiresAt: discoveredItems.matchingLeaseExpiresAt,
-        })
-        .get();
-      if (claimed?.leaseExpiresAt === null) continue;
+        }))[0];
+      // No row: another worker won the compare-and-swap between the select and
+      // this update. SQLite's `.returning().get()` typed a miss as a row, so
+      // the old code spread `undefined` into a malformed claim instead of
+      // skipping; Postgres returns an empty array and makes the miss visible.
+      if (!claimed || claimed.leaseExpiresAt === null) continue;
       claims.push({
         ...claimed,
         owner: input.owner,
@@ -246,7 +246,7 @@ export async function heartbeatMatchingClaim(
   leaseMs: number,
 ): Promise<boolean> {
   return (
-    (await db
+    rowsAffected((await db
       .update(discoveredItems)
       .set({
         matchingLeaseExpiresAt: sql`
@@ -254,8 +254,7 @@ export async function heartbeatMatchingClaim(
         `,
         matchingHeartbeatAt: DATABASE_NOW_MS,
       })
-      .where(claimIsCurrent(claim))
-      .run()).changes === 1
+      .where(claimIsCurrent(claim)))) === 1
   );
 }
 
@@ -265,7 +264,7 @@ async function markRetryable(
   code: string,
 ): Promise<boolean> {
   return (
-    (await db
+    rowsAffected((await db
       .update(discoveredItems)
       .set({
         matchingState: "retryable_error",
@@ -274,8 +273,7 @@ async function markRetryable(
         matchingHeartbeatAt: null,
         matchingError: code,
       })
-      .where(claimIsCurrent(claim))
-      .run()).changes === 1
+      .where(claimIsCurrent(claim)))) === 1
   );
 }
 
@@ -289,11 +287,10 @@ async function commitMatchingResult(
 ): Promise<boolean> {
   try {
     return await db.transaction(async (tx) => {
-      const item = await tx
+      const item = (await tx
         .select()
         .from(discoveredItems)
-        .where(claimIsCurrent(claim))
-        .get();
+        .where(claimIsCurrent(claim)))[0];
       if (!item) throw new MatchingFenceError();
       const currentFingerprint = await fingerprintForItem(
         tx,
@@ -311,9 +308,8 @@ async function commitMatchingResult(
             matchingHeartbeatAt: null,
             matchingError: null,
           })
-          .where(claimIsCurrent(claim))
-          .run();
-        if (reset.changes !== 1) throw new MatchingFenceError();
+          .where(claimIsCurrent(claim));
+        if (rowsAffected(reset) !== 1) throw new MatchingFenceError();
         return false;
       }
 
@@ -340,9 +336,8 @@ async function commitMatchingResult(
           matchingHeartbeatAt: null,
           matchingError: null,
         })
-        .where(claimIsCurrent(claim))
-        .run();
-      if (updated.changes !== 1) throw new MatchingFenceError();
+        .where(claimIsCurrent(claim));
+      if (rowsAffected(updated) !== 1) throw new MatchingFenceError();
       return true;
     });
   } catch (error) {
@@ -357,11 +352,10 @@ async function currentClaimedItems(
 ): Promise<Array<{ claim: MatchingClaim; item: DiscoveredItemRow }>> {
   const found = await Promise.all(
     claims.map(async (claim) => {
-      const item = await db
+      const item = (await db
         .select()
         .from(discoveredItems)
-        .where(claimIsCurrent(claim))
-        .get();
+        .where(claimIsCurrent(claim)))[0];
       return item ? [{ claim, item }] : [];
     }),
   );

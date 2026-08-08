@@ -100,8 +100,7 @@ export async function listAgentRuns(
     .from(agentRuns)
     .where(and(...conditions))
     .orderBy(desc(agentRuns.startedAt))
-    .limit(options.limit ?? DEFAULT_LIST_LIMIT)
-    .all())
+    .limit(options.limit ?? DEFAULT_LIST_LIMIT))
     .map(rowToSummary);
 }
 
@@ -110,18 +109,16 @@ export async function getAgentRunDetail(
   workspaceId: string,
   runId: string,
 ): Promise<AgentRunDetail | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(agentRuns)
-    .where(and(eq(agentRuns.workspaceId, workspaceId), eq(agentRuns.id, runId)))
-    .get();
+    .where(and(eq(agentRuns.workspaceId, workspaceId), eq(agentRuns.id, runId))))[0];
   if (!row) return undefined;
   const steps = (await db
     .select()
     .from(agentRunSteps)
     .where(eq(agentRunSteps.runId, runId))
-    .orderBy(agentRunSteps.stepIndex)
-    .all())
+    .orderBy(agentRunSteps.stepIndex))
     .map(rowToStep);
   return {
     ...rowToSummary(row),

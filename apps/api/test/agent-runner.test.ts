@@ -25,10 +25,9 @@ import { createTestDb } from "./helpers";
 const WORKSPACE_ID = "workspace-agents";
 
 async function fixture(script: ScriptedStep[]) {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 });
   const gateway = new ScriptedGateway(script);
   const runner = new AgentRunner(db, gateway);
   return { db, gateway, runner };
@@ -67,13 +66,12 @@ function lookupTool(): { tool: AgentTool; received: unknown[] } {
 }
 
 async function runRows(db: Db, runId: string) {
-  const run = (await db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get())!;
+  const run = ((await db.select().from(agentRuns).where(eq(agentRuns.id, runId)))[0])!;
   const steps = await db
     .select()
     .from(agentRunSteps)
     .where(eq(agentRunSteps.runId, runId))
-    .orderBy(agentRunSteps.stepIndex)
-    .all();
+    .orderBy(agentRunSteps.stepIndex);
   return { run, steps };
 }
 
@@ -291,10 +289,9 @@ describe("AgentRunner", () => {
   });
 
   it("throws (not a run result) when the gateway lacks agentStep", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 });
     const runner = new AgentRunner(db, {
       generate: async () => ({ text: "x", model: "m", provider: "p", durationMs: 0 }),
     });
@@ -349,10 +346,9 @@ describe("AgentRunner streaming", () => {
   });
 
   it("degrades to one whole-text delta when the gateway cannot stream", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 });
     const scripted = new ScriptedGateway([{ text: "All at once" }]);
     // agentStep only — no agentStepStream.
     const runner = new AgentRunner(db, {
@@ -416,10 +412,9 @@ describe("search_evidence proof tool", () => {
   }
 
   async function seededEvidence() {
-    const db = createTestDb();
+    const db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 });
     const store = new FakeEvidenceStore();
     const collectionId = await store.createCollection(WORKSPACE_ID);
     const storeDocId = await store.addDocument({
@@ -440,8 +435,7 @@ describe("search_evidence proof tool", () => {
         status: "ready",
         kind: "manual",
         createdAt: 1,
-      })
-      .run();
+      });
     return { db, store };
   }
 
@@ -468,10 +462,9 @@ describe("search_evidence proof tool", () => {
   });
 
   it("reports an empty corpus instead of failing", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await db.insert(workspaces)
-      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 });
     const store = new FakeEvidenceStore();
     const tool = evidenceAgentTool(db, store);
 

@@ -1,60 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
 import { createTestDb } from "./helpers";
+import { constraintText, indexes, tableNames } from "./schema-introspection";
 
-interface MasterRow {
-  name: string;
-  type: string;
-  sql: string | null;
-}
+const QUEUE_TABLES = [
+  "background_jobs",
+  "background_schedules",
+  "background_workspace_dispatch",
+];
 
-describe("Sprint 73 background queue migration", () => {
+describe("Sprint 73 background queue schema", () => {
   it("creates the job, schedule, and workspace-dispatch tables", async () => {
-    const db = createTestDb();
-    const rows = await db.all<MasterRow>(sql`
-      SELECT name, type, sql
-      FROM sqlite_master
-      WHERE name IN (
-        'background_jobs',
-        'background_schedules',
-        'background_workspace_dispatch'
-      )
-      ORDER BY name
-    `);
+    const db = await createTestDb();
+    const present = await tableNames(db);
+    expect(QUEUE_TABLES.filter((name) => present.includes(name))).toEqual(QUEUE_TABLES);
 
-    expect(rows.map((row) => row.name)).toEqual([
-      "background_jobs",
-      "background_schedules",
-      "background_workspace_dispatch",
-    ]);
-    for (const row of rows) {
-      expect(row.type).toBe("table");
-      expect(row.sql).toContain("workspace_id");
-      expect(row.sql).toContain("ON DELETE cascade");
+    for (const table of QUEUE_TABLES) {
+      // Every queue table is workspace-scoped and dies with its workspace, so
+      // deleting a workspace can never strand queued work.
+      const text = await constraintText(db, table);
+      expect(text).toContain("workspace_id");
+      expect(text).toContain("ON DELETE CASCADE");
     }
   });
 
   it("enforces active job and per-workspace schedule uniqueness", async () => {
-    const db = createTestDb();
-    const indexes = await db.all<{ name: string; sql: string | null }>(sql`
-      SELECT name, sql
-      FROM sqlite_master
-      WHERE type = 'index'
-        AND tbl_name IN ('background_jobs', 'background_schedules')
-      ORDER BY name
-    `);
+    const db = await createTestDb();
+    const jobIndexes = await indexes(db, "background_jobs");
+    const scheduleIndexes = await indexes(db, "background_schedules");
 
-    expect(indexes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "background_jobs_active_key_unique",
-          sql: expect.stringContaining("UNIQUE"),
-        }),
-        expect.objectContaining({
-          name: "background_schedules_workspace_kind_unique",
-          sql: expect.stringContaining("UNIQUE"),
-        }),
-      ]),
-    );
+    expect(
+      jobIndexes.find((i) => i.name === "background_jobs_active_key_unique")?.definition,
+    ).toContain("CREATE UNIQUE INDEX");
+    expect(
+      scheduleIndexes.find((i) => i.name === "background_schedules_workspace_kind_unique")
+        ?.definition,
+    ).toContain("CREATE UNIQUE INDEX");
   });
 });

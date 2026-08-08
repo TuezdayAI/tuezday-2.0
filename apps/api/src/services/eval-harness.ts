@@ -155,8 +155,7 @@ export async function buildEvalSuite(
       ),
     )
     .orderBy(desc(drafts.updatedAt))
-    .limit(input.limit)
-    .all();
+    .limit(input.limit);
 
   const now = Date.now();
   const suiteId = randomUUID();
@@ -193,8 +192,8 @@ export async function buildEvalSuite(
     createdByUserId: actor.userId,
     createdAt: now,
   };
-  await db.insert(evalSuites).values(suiteRow).run();
-  if (caseRows.length > 0) await db.insert(evalCases).values(caseRows).run();
+  await db.insert(evalSuites).values(suiteRow);
+  if (caseRows.length > 0) await db.insert(evalCases).values(caseRows);
   return { suite: rowToSuite(suiteRow), cases: caseRows.map(rowToCase) };
 }
 
@@ -213,8 +212,7 @@ async function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Prom
         isNotNull(approvalDecisions.reason),
       ),
     )
-    .orderBy(desc(approvalDecisions.createdAt))
-    .all();
+    .orderBy(desc(approvalDecisions.createdAt));
   for (const row of rows) {
     if (row.reason && !found.has(row.draftId)) found.set(row.draftId, row.reason);
   }
@@ -226,8 +224,7 @@ export async function listEvalSuites(db: Db, workspaceId: string): Promise<EvalS
     .select()
     .from(evalSuites)
     .where(eq(evalSuites.workspaceId, workspaceId))
-    .orderBy(desc(evalSuites.createdAt))
-    .all())
+    .orderBy(desc(evalSuites.createdAt)))
     .map(rowToSuite);
 }
 
@@ -235,8 +232,7 @@ export async function listEvalCases(db: Db, workspaceId: string, suiteId: string
   return (await db
     .select()
     .from(evalCases)
-    .where(and(eq(evalCases.workspaceId, workspaceId), eq(evalCases.suiteId, suiteId)))
-    .all())
+    .where(and(eq(evalCases.workspaceId, workspaceId), eq(evalCases.suiteId, suiteId))))
     .map(rowToCase);
 }
 
@@ -252,8 +248,7 @@ export async function runCorpus(db: Db, pipelineRunId: string): Promise<string> 
   const agentRunIds = (await db
     .select({ agentRunId: pipelineRunSteps.agentRunId })
     .from(pipelineRunSteps)
-    .where(eq(pipelineRunSteps.runId, pipelineRunId))
-    .all())
+    .where(eq(pipelineRunSteps.runId, pipelineRunId)))
     .map((row) => row.agentRunId)
     .filter((id): id is string => id !== null);
   if (agentRunIds.length === 0) return "";
@@ -262,15 +257,13 @@ export async function runCorpus(db: Db, pipelineRunId: string): Promise<string> 
   for (const row of await db
     .select({ system: agentRuns.system, inputMessages: agentRuns.inputMessages })
     .from(agentRuns)
-    .where(inArray(agentRuns.id, agentRunIds))
-    .all()) {
+    .where(inArray(agentRuns.id, agentRunIds))) {
     parts.push(row.system, row.inputMessages);
   }
   for (const row of await db
     .select({ result: agentRunSteps.toolResultJson })
     .from(agentRunSteps)
-    .where(inArray(agentRunSteps.runId, agentRunIds))
-    .all()) {
+    .where(inArray(agentRunSteps.runId, agentRunIds))) {
     if (row.result) parts.push(row.result);
   }
   return parts.join("\n");
@@ -282,8 +275,7 @@ export async function runCitations(db: Db, pipelineRunId: string): Promise<strin
   for (const row of await db
     .select({ outputJson: pipelineRunSteps.outputJson })
     .from(pipelineRunSteps)
-    .where(eq(pipelineRunSteps.runId, pipelineRunId))
-    .all()) {
+    .where(eq(pipelineRunSteps.runId, pipelineRunId))) {
     if (!row.outputJson) continue;
     let parsed: unknown;
     try {
@@ -489,11 +481,10 @@ export async function runEvalSuite(
   input: RunEvalSuiteInput,
   actor: { userId: string | null; label: string },
 ): Promise<EvalRunDetail> {
-  const suiteRow = await db
+  const suiteRow = (await db
     .select()
     .from(evalSuites)
-    .where(and(eq(evalSuites.workspaceId, workspaceId), eq(evalSuites.id, input.suiteId)))
-    .get();
+    .where(and(eq(evalSuites.workspaceId, workspaceId), eq(evalSuites.id, input.suiteId))))[0];
   if (!suiteRow) throw new EvalSuiteNotFoundError(input.suiteId);
   const suite = rowToSuite(suiteRow);
 
@@ -520,8 +511,7 @@ export async function runEvalSuite(
       createdByUserId: actor.userId,
       createdAt: now,
       finishedAt: null,
-    })
-    .run();
+    });
 
   const bannedClaims = (await listBannedClaims(db, workspaceId)).map((claim) => claim.phrase);
   const scored: ScoredCase[] = [];
@@ -547,8 +537,7 @@ export async function runEvalSuite(
       baselineLabel: input.baselineLabel ?? null,
       finishedAt: Date.now(),
     })
-    .where(eq(evalRuns.id, runId))
-    .run();
+    .where(eq(evalRuns.id, runId));
 
   return (await getEvalRunDetail(db, workspaceId, runId))!;
 }
@@ -681,8 +670,7 @@ async function writeCaseResult(
       durationMs: scored.durationMs,
       failureReason: scored.failureReason,
       createdAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 export async function listEvalRuns(db: Db, workspaceId: string, limit = 20): Promise<EvalRun[]> {
@@ -691,8 +679,7 @@ export async function listEvalRuns(db: Db, workspaceId: string, limit = 20): Pro
     .from(evalRuns)
     .where(eq(evalRuns.workspaceId, workspaceId))
     .orderBy(desc(evalRuns.createdAt))
-    .limit(Math.min(limit, 100))
-    .all())
+    .limit(Math.min(limit, 100)))
     .map(rowToRun);
 }
 
@@ -701,17 +688,15 @@ export async function getEvalRunDetail(
   workspaceId: string,
   runId: string,
 ): Promise<EvalRunDetail | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(evalRuns)
-    .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.id, runId)))
-    .get();
+    .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.id, runId))))[0];
   if (!row) return undefined;
   const results = (await db
     .select()
     .from(evalCaseResults)
-    .where(eq(evalCaseResults.runId, runId))
-    .all())
+    .where(eq(evalCaseResults.runId, runId)))
     .map(rowToCaseResult);
   return { ...rowToRun(row), results };
 }
@@ -727,20 +712,18 @@ export async function labelBaseline(
   runId: string,
   label: string,
 ): Promise<EvalRun | undefined> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(evalRuns)
-    .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.id, runId)))
-    .get();
+    .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.id, runId))))[0];
   if (!existing) return undefined;
   await db.transaction(async (tx) => {
     await tx.update(evalRuns)
       .set({ baselineLabel: null })
-      .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.baselineLabel, label)))
-      .run();
-    await tx.update(evalRuns).set({ baselineLabel: label }).where(eq(evalRuns.id, runId)).run();
+      .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.baselineLabel, label)));
+    await tx.update(evalRuns).set({ baselineLabel: label }).where(eq(evalRuns.id, runId));
   });
-  const updated = await db.select().from(evalRuns).where(eq(evalRuns.id, runId)).get();
+  const updated = (await db.select().from(evalRuns).where(eq(evalRuns.id, runId)))[0];
   return updated ? rowToRun(updated) : undefined;
 }
 
@@ -751,12 +734,11 @@ export async function findBaselineRun(
 ): Promise<EvalRun | undefined> {
   const conditions = [eq(evalRuns.workspaceId, workspaceId), isNotNull(evalRuns.baselineLabel)];
   if (label) conditions.push(eq(evalRuns.baselineLabel, label));
-  const row = await db
+  const row = (await db
     .select()
     .from(evalRuns)
     .where(and(...conditions))
-    .orderBy(desc(evalRuns.createdAt))
-    .get();
+    .orderBy(desc(evalRuns.createdAt)))[0];
   return row ? rowToRun(row) : undefined;
 }
 

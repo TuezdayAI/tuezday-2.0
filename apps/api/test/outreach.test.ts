@@ -76,7 +76,7 @@ describe("outreach sequences (Sprint 48)", () => {
     generateFails = false;
     vi.stubEnv("EMAIL_UNSUBSCRIBE_SECRET", "unsub");
     vi.stubEnv("APP_BASE_URL", "https://app.test");
-    db = createTestDb();
+    db = await createTestDb();
     gmail = new FakeGmailProvider();
     app = await buildAuthedApp({ db, llm: fakeGateway(), gmail, workerToken: WORKER_TOKEN });
     workspaceId = (await app.inject({ method: "POST", url: "/workspaces", payload: { name: "WS" } })).json().id;
@@ -121,7 +121,7 @@ describe("outreach sequences (Sprint 48)", () => {
       contentProfileJson: "{}",
       createdAt: now,
       updatedAt: now,
-    }).run();
+    });
     return id;
   }
 
@@ -167,7 +167,7 @@ describe("outreach sequences (Sprint 48)", () => {
       status: "allowed",
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
   }
 
   async function makeSequence(opts: {
@@ -214,7 +214,7 @@ describe("outreach sequences (Sprint 48)", () => {
   }
 
   async function enrollmentsFor(seqId: string) {
-    return await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).all();
+    return await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId));
   }
 
   // --- CRUD & activation ----------------------------------------------------
@@ -273,7 +273,7 @@ describe("outreach sequences (Sprint 48)", () => {
     const b = await createLead("b@acme.io");
     await allowRecipient("a@acme.io");
     // b is suppressed
-    await db.insert(emailSuppressions).values({ id: randomUUID(), workspaceId, normalizedEmail: "b@acme.io", reason: "unsubscribe", createdAt: Date.now() }).run();
+    await db.insert(emailSuppressions).values({ id: randomUUID(), workspaceId, normalizedEmail: "b@acme.io", reason: "unsubscribe", createdAt: Date.now() });
 
     // Manual sequences hold enrollments active so the global lock is observable.
     const seq1 = await makeSequence({ audienceId: await staticAudience([a, b]), mailboxIds: [mailboxId], automationMode: "manual" });
@@ -334,7 +334,7 @@ describe("outreach sequences (Sprint 48)", () => {
 
     await run();
     expect(gmail.sendEmail).not.toHaveBeenCalled(); // pending review
-    const msg = await db.select().from(outreachMessages).where(eq(outreachMessages.workspaceId, workspaceId)).get();
+    const msg = (await db.select().from(outreachMessages).where(eq(outreachMessages.workspaceId, workspaceId)))[0];
     expect(msg!.status).toBe("pending");
 
     // Approve the draft, then a second run dispatches it.
@@ -410,7 +410,7 @@ describe("outreach sequences (Sprint 48)", () => {
       externalCreatedAt: (enr.lastSentAt ?? Date.now()) + 1000,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
 
     await run(); // should detect the reply and stop
     const after = (await enrollmentsFor(seqId))[0]!;

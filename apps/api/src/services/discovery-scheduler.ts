@@ -148,22 +148,20 @@ async function selectedWorkspaces(
   workspaceId: string | undefined,
 ): Promise<Array<{ id: string; name: string }>> {
   if (workspaceId) {
-    const workspace = await deps.db
+    const workspace = (await deps.db
       .select({ id: workspaces.id, name: workspaces.name })
       .from(workspaces)
-      .where(eq(workspaces.id, workspaceId))
-      .get();
+      .where(eq(workspaces.id, workspaceId)))[0];
     return workspace ? [workspace] : [];
   }
   return await deps.db
     .select({ id: workspaces.id, name: workspaces.name })
-    .from(workspaces)
-    .all();
+    .from(workspaces);
 }
 
 async function hasQueuedWork(db: Db, workspaceId?: string): Promise<boolean> {
   return Boolean(
-    await db
+    (await db
     .select({ id: discoveryJobs.id })
     .from(discoveryJobs)
     .where(
@@ -174,8 +172,7 @@ async function hasQueuedWork(db: Db, workspaceId?: string): Promise<boolean> {
         eq(discoveryJobs.status, "queued"),
       ),
     )
-    .limit(1)
-    .get(),
+    .limit(1))[0],
   );
 }
 

@@ -39,19 +39,17 @@ async function scopeLabelFor(
 ): Promise<string | undefined> {
   const parts: string[] = [];
   if (row.personaId) {
-    const persona = await db
+    const persona = (await db
       .select({ name: personas.name })
       .from(personas)
-      .where(eq(personas.id, row.personaId))
-      .get();
+      .where(eq(personas.id, row.personaId)))[0];
     parts.push(`persona "${persona?.name ?? row.personaId}"`);
   }
   if (row.campaignId) {
-    const campaign = await db
+    const campaign = (await db
       .select({ name: campaigns.name })
       .from(campaigns)
-      .where(eq(campaigns.id, row.campaignId))
-      .get();
+      .where(eq(campaigns.id, row.campaignId)))[0];
     parts.push(`campaign "${campaign?.name ?? row.campaignId}"`);
   }
   return parts.length > 0 ? parts.join(" + ") : undefined;
@@ -73,8 +71,7 @@ export async function resolveChannelGuidance(
     .from(guidanceOverrides)
     .where(
       and(eq(guidanceOverrides.workspaceId, workspaceId), eq(guidanceOverrides.channel, channel)),
-    )
-    .all();
+    );
 
   const personaId = scope?.personaId ?? null;
   const campaignId = scope?.campaignId ?? null;
@@ -144,8 +141,7 @@ export async function listScopedGuidance(db: Db, workspaceId: string): Promise<G
         or(isNotNull(guidanceOverrides.personaId), isNotNull(guidanceOverrides.campaignId)),
       ),
     )
-    .orderBy(guidanceOverrides.channel, guidanceOverrides.updatedAt)
-    .all())
+    .orderBy(guidanceOverrides.channel, guidanceOverrides.updatedAt))
     .map(({ row, personaName, campaignName }) => ({
       id: row.id,
       channel: row.channel as Channel,
@@ -189,17 +185,15 @@ export async function setChannelGuidance(
   const now = Date.now();
   const personaId = scope?.personaId ?? null;
   const campaignId = scope?.campaignId ?? null;
-  const existing = await db
+  const existing = (await db
     .select({ id: guidanceOverrides.id })
     .from(guidanceOverrides)
-    .where(exactScopeWhere(workspaceId, channel, scope))
-    .get();
+    .where(exactScopeWhere(workspaceId, channel, scope)))[0];
 
   if (existing) {
     await db.update(guidanceOverrides)
       .set({ content, updatedAt: now })
-      .where(eq(guidanceOverrides.id, existing.id))
-      .run();
+      .where(eq(guidanceOverrides.id, existing.id));
   } else {
     await db.insert(guidanceOverrides)
       .values({
@@ -211,8 +205,7 @@ export async function setChannelGuidance(
         content,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
   }
 
   return { channel, content, source: "workspace", personaId, campaignId, updatedAt: now };
@@ -225,7 +218,7 @@ export async function resetChannelGuidance(
   channel: Channel,
   scope?: GuidanceScope,
 ): Promise<ChannelGuidance> {
-  await db.delete(guidanceOverrides).where(exactScopeWhere(workspaceId, channel, scope)).run();
+  await db.delete(guidanceOverrides).where(exactScopeWhere(workspaceId, channel, scope));
   return toChannelGuidance(channel, await resolveChannelGuidance(db, workspaceId, channel, scope));
 }
 
@@ -245,8 +238,7 @@ export async function deleteGuidanceForScope(
   if (scope.campaignId) conditions.push(eq(guidanceOverrides.campaignId, scope.campaignId)!);
   if (conditions.length === 0) return;
   await db.delete(guidanceOverrides)
-    .where(and(eq(guidanceOverrides.workspaceId, workspaceId), or(...conditions)))
-    .run();
+    .where(and(eq(guidanceOverrides.workspaceId, workspaceId), or(...conditions)));
 }
 
 /** Narrow an arbitrary string to a Channel, or undefined. */

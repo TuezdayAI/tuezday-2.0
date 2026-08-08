@@ -13,7 +13,7 @@ export async function createApiKey(db: Db, workspaceId: string, input: CreateApi
   const keyHash = hashKey(rawKey);
   const now = Date.now();
 
-  const apiKey = await db
+  const apiKey = (await db
     .insert(apiKeys)
     .values({
       id: randomUUID(),
@@ -23,8 +23,7 @@ export async function createApiKey(db: Db, workspaceId: string, input: CreateApi
       scopesJson: JSON.stringify(input.scopes),
       createdAt: now,
     })
-    .returning()
-    .get();
+    .returning())[0]!;
 
   return { rawKey, apiKey };
 }
@@ -33,18 +32,16 @@ export async function verifyApiKey(db: Db, rawKey: string): Promise<{ workspaceI
   const keyHash = hashKey(rawKey);
   const now = Date.now();
 
-  const apiKey = await db
+  const apiKey = (await db
     .select()
     .from(apiKeys)
-    .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
-    .get();
+    .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt))))[0];
 
   if (!apiKey) return null;
 
   await db.update(apiKeys)
     .set({ lastUsedAt: now })
-    .where(eq(apiKeys.id, apiKey.id))
-    .run();
+    .where(eq(apiKeys.id, apiKey.id));
 
   return {
     workspaceId: apiKey.workspaceId,
@@ -62,8 +59,7 @@ export async function listApiKeys(db: Db, workspaceId: string) {
       createdAt: apiKeys.createdAt,
     })
     .from(apiKeys)
-    .where(and(eq(apiKeys.workspaceId, workspaceId), isNull(apiKeys.revokedAt)))
-    .all())
+    .where(and(eq(apiKeys.workspaceId, workspaceId), isNull(apiKeys.revokedAt))))
     .map((k) => ({
       ...k,
       scopes: JSON.parse(k.scopes) as ApiScope[],
@@ -73,6 +69,5 @@ export async function listApiKeys(db: Db, workspaceId: string) {
 export async function revokeApiKey(db: Db, workspaceId: string, id: string): Promise<void> {
   await db.update(apiKeys)
     .set({ revokedAt: Date.now() })
-    .where(and(eq(apiKeys.id, id), eq(apiKeys.workspaceId, workspaceId)))
-    .run();
+    .where(and(eq(apiKeys.id, id), eq(apiKeys.workspaceId, workspaceId)));
 }

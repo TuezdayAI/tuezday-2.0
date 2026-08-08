@@ -46,8 +46,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
   const draftRows = await db
     .select({ state: drafts.state })
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, wid), eq(drafts.campaignId, cid)))
-    .all();
+    .where(and(eq(drafts.workspaceId, wid), eq(drafts.campaignId, cid)));
   const draftCounts = Object.fromEntries(APPROVAL_STATES.map((s) => [s, 0])) as Record<
     ApprovalState,
     number
@@ -66,8 +65,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
         eq(generations.campaignId, cid),
         sql`${generations.rating} IS NOT NULL`,
       ),
-    )
-    .all();
+    );
   const ratings = Object.fromEntries(OUTPUT_RATINGS.map((r) => [r, 0])) as Record<
     OutputRating,
     number
@@ -86,8 +84,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
     })
     .from(publications)
     .innerJoin(drafts, eq(publications.draftId, drafts.id))
-    .where(and(eq(drafts.workspaceId, wid), eq(drafts.campaignId, cid)))
-    .all();
+    .where(and(eq(drafts.workspaceId, wid), eq(drafts.campaignId, cid)));
 
   let publishedCount = 0;
   let scheduledCount = 0;
@@ -136,8 +133,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
           eq(metrics.subjectType, "publication"),
           inArray(metrics.subjectId, pubIds),
         ),
-      )
-      .all();
+      );
     const has7d = new Set(
       factRows.filter((r) => r.window === "7d").map((r) => r.subjectId),
     );
@@ -172,8 +168,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
         eq(metrics.window, "point"),
         eq(metrics.source, "manual"),
       ),
-    )
-    .all();
+    );
   for (const row of learningFacts) {
     if (row.metricKey in learningTotals) {
       learningTotals[row.metricKey as keyof typeof learningTotals] += row.value;
@@ -184,8 +179,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
   const launchRows = await db
     .select({ id: launches.id })
     .from(launches)
-    .where(and(eq(launches.workspaceId, wid), eq(launches.campaignId, cid)))
-    .all();
+    .where(and(eq(launches.workspaceId, wid), eq(launches.campaignId, cid)));
   const launchIds = launchRows.map((r) => r.id);
   let sentCount = 0;
   let failedCount = 0;
@@ -195,8 +189,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
     const msgRows = await db
       .select({ id: launchMessages.id, status: launchMessages.status, channel: launchMessages.channel })
       .from(launchMessages)
-      .where(sql`${launchMessages.launchId} IN (${sql.join(launchIds.map((id) => sql`${id}`), sql`, `)})`)
-      .all();
+      .where(sql`${launchMessages.launchId} IN (${sql.join(launchIds.map((id) => sql`${id}`), sql`, `)})`);
     for (const msg of msgRows) {
       if (msg.status === "sent") {
         sentCount++;
@@ -223,8 +216,7 @@ export async function getCampaignInsights(db: Db, campaign: Campaign): Promise<C
             WHERE ${launchMessages.launchId} IN (${sql.join(launchIds.map((id) => sql`${id}`), sql`, `)})
           )`,
         ),
-      )
-      .all();
+      );
     repliedCount = replyRows.length;
     for (const row of replyRows) {
       repliedChannels.set(row.channel, (repliedChannels.get(row.channel) ?? 0) + 1);
@@ -359,8 +351,7 @@ export async function getWorkspaceInsights(db: Db, workspaceId: string): Promise
   const brainDocs = await db
     .select({ docType: brainDocuments.docType, content: brainDocuments.content })
     .from(brainDocuments)
-    .where(eq(brainDocuments.workspaceId, workspaceId))
-    .all();
+    .where(eq(brainDocuments.workspaceId, workspaceId));
   const docsByType = new Map(brainDocs.map((d) => [d.docType, d.content]));
   const docs = BRAIN_DOC_TYPES.map((type) => ({
     type,
@@ -368,25 +359,22 @@ export async function getWorkspaceInsights(db: Db, workspaceId: string): Promise
   }));
   const filledCount = docs.filter((d) => d.filled).length;
 
-  const overlayCount = (await db
+  const overlayCount = ((await db
     .select({ count: sql<number>`count(*)` })
     .from(guidanceOverrides)
-    .where(eq(guidanceOverrides.workspaceId, workspaceId))
-    .get())?.count ?? 0;
+    .where(eq(guidanceOverrides.workspaceId, workspaceId)))[0])?.count ?? 0;
 
-  const personaCount = (await db
+  const personaCount = ((await db
     .select({ count: sql<number>`count(*)` })
     .from(personas)
-    .where(eq(personas.workspaceId, workspaceId))
-    .get())?.count ?? 0;
+    .where(eq(personas.workspaceId, workspaceId)))[0])?.count ?? 0;
 
   const campaignCount = allCampaigns.length;
 
-  const generationsTotal = (await db
+  const generationsTotal = ((await db
     .select({ count: sql<number>`count(*)` })
     .from(generations)
-    .where(eq(generations.workspaceId, workspaceId))
-    .get())?.count ?? 0;
+    .where(eq(generations.workspaceId, workspaceId)))[0])?.count ?? 0;
 
   return {
     campaigns: campaignRollups,

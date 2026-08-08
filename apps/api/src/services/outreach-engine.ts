@@ -205,8 +205,7 @@ export async function newestInboundEmailReply(
         eq(inboxItems.kind, "email"),
         gte(inboxItems.externalCreatedAt, sinceMs + 1),
       ),
-    )
-    .all())
+    ))
     .filter((r) => normalize(r.author) === target)
     .sort((a, b) => b.at - a.at);
   const newest = rows[0];
@@ -286,8 +285,7 @@ async function handleReplyOutcome(
     await ctx.db
       .insert(emailSuppressions)
       .values({ id: randomUUID(), workspaceId: seq.workspaceId, normalizedEmail: normalize(email), reason: "bounce", createdAt: nowMs })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
     await updateEnrollment(ctx.db, enrollment.id, {
       status: "failed",
       stoppedReason: "bounced",
@@ -324,7 +322,7 @@ async function handleReplyOutcome(
 }
 
 async function isSuppressed(db: Db, workspaceId: string, email: string): Promise<boolean> {
-  return !!await db
+  return !!(await db
     .select({ id: emailSuppressions.id })
     .from(emailSuppressions)
     .where(
@@ -332,24 +330,22 @@ async function isSuppressed(db: Db, workspaceId: string, email: string): Promise
         eq(emailSuppressions.workspaceId, workspaceId),
         eq(emailSuppressions.normalizedEmail, normalize(email)),
       ),
-    )
-    .get();
+    ))[0];
 }
 
 async function draftRow(db: Db, draftId: string): Promise<DraftRow | undefined> {
-  return await db.select().from(drafts).where(eq(drafts.id, draftId)).get();
+  return (await db.select().from(drafts).where(eq(drafts.id, draftId)))[0];
 }
 
 async function messageRow(db: Db, messageId: string): Promise<OutreachMessageRow | undefined> {
-  return await db.select().from(outreachMessages).where(eq(outreachMessages.id, messageId)).get();
+  return (await db.select().from(outreachMessages).where(eq(outreachMessages.id, messageId)))[0];
 }
 
 async function currentMessage(db: Db, enrollmentId: string, stepNumber: number): Promise<OutreachMessageRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(outreachMessages)
-    .where(and(eq(outreachMessages.enrollmentId, enrollmentId), eq(outreachMessages.stepNumber, stepNumber)))
-    .get();
+    .where(and(eq(outreachMessages.enrollmentId, enrollmentId), eq(outreachMessages.stepNumber, stepNumber))))[0];
 }
 
 async function priorBodies(db: Db, enrollmentId: string, beforeStep: number): Promise<string[]> {
@@ -357,14 +353,13 @@ async function priorBodies(db: Db, enrollmentId: string, beforeStep: number): Pr
     .select({ content: drafts.content, step: outreachMessages.stepNumber })
     .from(outreachMessages)
     .innerJoin(drafts, eq(outreachMessages.draftId, drafts.id))
-    .where(eq(outreachMessages.enrollmentId, enrollmentId))
-    .all())
+    .where(eq(outreachMessages.enrollmentId, enrollmentId)))
     .filter((r) => r.step < beforeStep && r.content.trim().length > 0)
     .map((r) => r.content);
 }
 
 async function updateEnrollment(db: Db, id: string, set: Partial<OutreachEnrollmentRow>): Promise<void> {
-  await db.update(outreachEnrollments).set({ ...set, updatedAt: Date.now() }).where(eq(outreachEnrollments.id, id)).run();
+  await db.update(outreachEnrollments).set({ ...set, updatedAt: Date.now() }).where(eq(outreachEnrollments.id, id));
 }
 
 interface GenResult {
@@ -421,7 +416,7 @@ async function generateOutreachStep(
       lastError: message.slice(0, 500),
       createdAt: nowMs,
       updatedAt: nowMs,
-    }).run();
+    });
   };
 
   try {
@@ -499,7 +494,7 @@ async function generateOutreachStep(
       lastError: null,
       createdAt: nowMs,
       updatedAt: nowMs,
-    }).run();
+    });
     return { ok: true, draft, messageId };
   } catch (err) {
     await insertFailed(err instanceof GatewayError ? err.message : err instanceof Error ? err.message : String(err));
@@ -563,8 +558,7 @@ async function proposeOutreachSend(
   }
   await ctx.db.update(outreachMessages)
     .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
-    .where(eq(outreachMessages.id, message.id))
-    .run();
+    .where(eq(outreachMessages.id, message.id));
   const after = await messageRow(ctx.db, message.id);
   return {
     sent: submission.action.status === "succeeded" && after?.status === "sent",
@@ -677,7 +671,7 @@ async function advanceEnrollment(
 }
 
 async function audienceRow(db: Db, workspaceId: string, audienceId: string): Promise<AudienceRow | undefined> {
-  return await db.select().from(audiences).where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, audienceId))).get();
+  return (await db.select().from(audiences).where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, audienceId))))[0];
 }
 
 async function enrolledKeysFor(db: Db, sequenceId: string): Promise<Set<string>> {
@@ -685,8 +679,7 @@ async function enrolledKeysFor(db: Db, sequenceId: string): Promise<Set<string>>
     (await db
       .select({ t: outreachEnrollments.recipientType, id: outreachEnrollments.recipientId })
       .from(outreachEnrollments)
-      .where(eq(outreachEnrollments.sequenceId, sequenceId))
-      .all())
+      .where(eq(outreachEnrollments.sequenceId, sequenceId)))
       .map((r) => `${r.t}:${r.id}`),
   );
 }
@@ -696,8 +689,7 @@ async function activeKeys(db: Db, workspaceId: string): Promise<Set<string>> {
     (await db
       .select({ t: outreachEnrollments.recipientType, id: outreachEnrollments.recipientId })
       .from(outreachEnrollments)
-      .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.status, "active")))
-      .all())
+      .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.status, "active"))))
       .map((r) => `${r.t}:${r.id}`),
   );
 }
@@ -706,8 +698,7 @@ async function enrolledTodayCount(db: Db, sequenceId: string, nowMs: number): Pr
   return (await db
     .select({ at: outreachEnrollments.enrolledAt })
     .from(outreachEnrollments)
-    .where(eq(outreachEnrollments.sequenceId, sequenceId))
-    .all())
+    .where(eq(outreachEnrollments.sequenceId, sequenceId)))
     .filter((r) => r.at >= utcDayStart(nowMs)).length;
 }
 
@@ -748,7 +739,7 @@ async function enrollSequence(ctx: RunCtx, seq: OutreachSequenceRow, nowMs: numb
         enrolledAt: nowMs,
         createdAt: nowMs,
         updatedAt: nowMs,
-      }).run();
+      });
       acc.enrolled += 1;
       remaining -= 1;
       active.add(key);
@@ -782,8 +773,7 @@ export async function runOutreach(
   const activeSequences = await db
     .select()
     .from(outreachSequences)
-    .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.status, "active")))
-    .all();
+    .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.status, "active")));
 
   // Budget degradation (Sprint 59): enrolling costs nothing, but advancing a
   // step generates. Due steps keep their nextDueAt and resume on a later tick.
@@ -799,8 +789,7 @@ export async function runOutreach(
     const active = await db
       .select()
       .from(outreachEnrollments)
-      .where(and(eq(outreachEnrollments.sequenceId, seq.id), eq(outreachEnrollments.status, "active")))
-      .all();
+      .where(and(eq(outreachEnrollments.sequenceId, seq.id), eq(outreachEnrollments.status, "active")));
     for (const enrollment of active) {
       try {
         await advanceEnrollment(ctx, seq, steps, enrollment, nowMs, acc);
@@ -816,17 +805,15 @@ export async function runOutreach(
 
 /** Flip a sequence to completed once it has enrollments and none are active. */
 async function maybeComplete(db: Db, workspaceId: string, sequenceId: string): Promise<void> {
-  const active = await db
+  const active = (await db
     .select({ id: outreachEnrollments.id })
     .from(outreachEnrollments)
-    .where(and(eq(outreachEnrollments.sequenceId, sequenceId), eq(outreachEnrollments.status, "active")))
-    .get();
+    .where(and(eq(outreachEnrollments.sequenceId, sequenceId), eq(outreachEnrollments.status, "active"))))[0];
   if (active) return;
-  const any = await db
+  const any = (await db
     .select({ id: outreachEnrollments.id })
     .from(outreachEnrollments)
-    .where(eq(outreachEnrollments.sequenceId, sequenceId))
-    .get();
+    .where(eq(outreachEnrollments.sequenceId, sequenceId)))[0];
   const seq = await getSequenceRow(db, workspaceId, sequenceId);
   // Only auto-complete a running sequence that has drained; a live segment can
   // still auto-enroll into an active sequence, so leave `active` alone unless

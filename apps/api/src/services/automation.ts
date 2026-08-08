@@ -61,11 +61,10 @@ export {
 
 export async function connectionTimeZone(db: Db, connectionId: string): Promise<string> {
   return (
-    (await db
+    ((await db
       .select({ timezone: connections.timezone })
       .from(connections)
-      .where(eq(connections.id, connectionId))
-      .get())?.timezone ?? "UTC"
+      .where(eq(connections.id, connectionId)))[0])?.timezone ?? "UTC"
   );
 }
 
@@ -106,8 +105,7 @@ export async function countConnectionPublicationsForDay(
         gte(publications.scheduledFor, start),
         lt(publications.scheduledFor, end),
       ),
-    )
-    .all()).length;
+    )).length;
   const pendingActions = (await db
     .select({ id: externalActions.id })
     .from(externalActions)
@@ -126,8 +124,7 @@ export async function countConnectionPublicationsForDay(
         gte(externalActions.requestedFor, start),
         lt(externalActions.requestedFor, end),
       ),
-    )
-    .all()).length;
+    )).length;
   return receipts + pendingActions;
 }
 
@@ -157,8 +154,7 @@ export async function countCampaignPublicationsForDay(
         gte(publications.scheduledFor, start),
         lt(publications.scheduledFor, end),
       ),
-    )
-    .all()).length;
+    )).length;
   const pendingActions = (await db
     .select({ id: externalActions.id })
     .from(externalActions)
@@ -177,8 +173,7 @@ export async function countCampaignPublicationsForDay(
         gte(externalActions.requestedFor, start),
         lt(externalActions.requestedFor, end),
       ),
-    )
-    .all()).length;
+    )).length;
   return receipts + pendingActions;
 }
 
@@ -245,8 +240,7 @@ async function signalsOldestFirst(db: Db, workspaceId: string): Promise<Signal[]
     .select()
     .from(signalsTable)
     .where(eq(signalsTable.workspaceId, workspaceId))
-    .orderBy(asc(signalsTable.createdAt))
-    .all())
+    .orderBy(asc(signalsTable.createdAt)))
     // `matches` stays empty on these internal objects — routing reads the
     // signal_matches table directly via getBestSignalMatchForCampaign.
     .map((row) => ({ ...row, source: row.source as SignalSource, matches: [] }));
@@ -260,7 +254,7 @@ async function hasDraftFor(
   channel: Channel,
 ): Promise<boolean> {
   return (
-    await db
+    (await db
       .select({ id: drafts.id })
       .from(drafts)
       .where(
@@ -270,8 +264,7 @@ async function hasDraftFor(
           eq(drafts.campaignId, campaignId),
           eq(drafts.channel, channel),
         ),
-      )
-      .get() !== undefined
+      ))[0] !== undefined
   );
 }
 

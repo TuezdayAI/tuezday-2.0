@@ -26,8 +26,7 @@ export async function resolveTaskDocMatrix(db: Db, workspaceId: string): Promise
   const rows = await db
     .select()
     .from(contextMatrixOverrides)
-    .where(eq(contextMatrixOverrides.workspaceId, workspaceId))
-    .all();
+    .where(eq(contextMatrixOverrides.workspaceId, workspaceId));
   for (const row of rows) {
     if (!(TASK_TYPES as readonly string[]).includes(row.taskType)) continue;
     if (!(MATRIX_DOC_TYPES as readonly string[]).includes(row.docType)) continue;
@@ -48,8 +47,7 @@ export async function listMatrixCells(db: Db, workspaceId: string): Promise<Matr
   const rows = await db
     .select()
     .from(contextMatrixOverrides)
-    .where(eq(contextMatrixOverrides.workspaceId, workspaceId))
-    .all();
+    .where(eq(contextMatrixOverrides.workspaceId, workspaceId));
   const updatedAtByCell = new Map(rows.map((r) => [`${r.taskType}:${r.docType}`, r.updatedAt]));
   const matrix = await resolveTaskDocMatrix(db, workspaceId);
   return TASK_TYPES.flatMap((taskType) =>
@@ -71,7 +69,7 @@ export async function setMatrixCell(
   input: UpdateMatrixCellInput,
 ): Promise<MatrixCell> {
   const now = Date.now();
-  const existing = await db
+  const existing = (await db
     .select({ id: contextMatrixOverrides.id })
     .from(contextMatrixOverrides)
     .where(
@@ -80,14 +78,12 @@ export async function setMatrixCell(
         eq(contextMatrixOverrides.taskType, taskType),
         eq(contextMatrixOverrides.docType, docType),
       ),
-    )
-    .get();
+    ))[0];
   const reason = input.reason?.trim() || null;
   if (existing) {
     await db.update(contextMatrixOverrides)
       .set({ mode: input.mode, reason, updatedAt: now })
-      .where(eq(contextMatrixOverrides.id, existing.id))
-      .run();
+      .where(eq(contextMatrixOverrides.id, existing.id));
   } else {
     await db.insert(contextMatrixOverrides)
       .values({
@@ -99,8 +95,7 @@ export async function setMatrixCell(
         reason,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
   }
   return {
     taskType,
@@ -126,8 +121,7 @@ export async function resetMatrixCell(
         eq(contextMatrixOverrides.taskType, taskType),
         eq(contextMatrixOverrides.docType, docType),
       ),
-    )
-    .run();
+    );
   return {
     taskType,
     docType,

@@ -97,7 +97,7 @@ describe("external-action paid launch boundary", () => {
   let campaignId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     state = graphState();
     received = [];
     const fetcher = (async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -206,12 +206,11 @@ describe("external-action paid launch boundary", () => {
     return await db
       .select()
       .from(externalActionDecisions)
-      .where(eq(externalActionDecisions.workspaceId, workspaceId))
-      .all();
+      .where(eq(externalActionDecisions.workspaceId, workspaceId));
   }
 
   async function actionRows() {
-    return await db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
+    return await db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId));
   }
 
   async function setAutonomous() {
@@ -313,8 +312,7 @@ describe("external-action paid launch boundary", () => {
         content: "Primary text: Edited angle.\nHeadline: New headline\nDescription: New desc",
         updatedAt: Date.now(),
       })
-      .where(eq(drafts.id, approvedDraftId))
-      .run();
+      .where(eq(drafts.id, approvedDraftId));
     const authorized = await authorize(queued.json().action.id);
     expect(authorized.statusCode).toBe(409);
     expect(authorized.json().action.status).toBe("stale");
@@ -464,7 +462,7 @@ describe("external-action paid launch boundary", () => {
     expect(after.externalCampaignId).toBe("cmp_1");
     expect(after.lastError).toContain("graph says no");
     expect(
-      (await db.select().from(adLaunches).where(eq(adLaunches.id, id)).get())?.externalActionId,
+      ((await db.select().from(adLaunches).where(eq(adLaunches.id, id)))[0])?.externalActionId,
     ).toBe(failed.json().action.id);
 
     state.failOn = null;

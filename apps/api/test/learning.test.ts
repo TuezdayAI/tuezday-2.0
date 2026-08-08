@@ -28,7 +28,7 @@ describe("learning API", () => {
 
   beforeEach(async () => {
     captured = { prompts: [] };
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway(captured) });
+    app = await buildAuthedApp({ db: await createTestDb(), llm: fakeGateway(captured) });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Learner" } })
     ).json().id;

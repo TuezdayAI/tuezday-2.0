@@ -32,11 +32,10 @@ async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 
 async function campaignExists(db: Db, workspaceId: string, campaignId: string): Promise<boolean> {
   return (
-    await db
+    (await db
       .select({ id: campaigns.id })
       .from(campaigns)
-      .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
-      .get() !== undefined
+      .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId))))[0] !== undefined
   );
 }
 

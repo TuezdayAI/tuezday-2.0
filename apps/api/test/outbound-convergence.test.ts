@@ -74,7 +74,7 @@ describe("outbound strategy convergence (Sprint 51)", () => {
   let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     exporter = new SpyOutboundExporter();
     emailProvider = new FakeOutboundEmailProvider();
     app = await buildAuthedApp({
@@ -126,8 +126,7 @@ describe("outbound strategy convergence (Sprint 51)", () => {
         createdAt: now,
         updatedAt: now,
       })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
   }
 
   async function allowRecipient(email: string): Promise<void> {
@@ -144,8 +143,7 @@ describe("outbound strategy convergence (Sprint 51)", () => {
       .onConflictDoUpdate({
         target: [emailRecipientPermissions.workspaceId, emailRecipientPermissions.normalizedEmail],
         set: { status: "allowed", updatedAt: now },
-      })
-      .run();
+      });
   }
 
   async function createLead(name: string): Promise<{ id: string; email: string }> {

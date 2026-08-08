@@ -78,8 +78,7 @@ async function insertCampaignRow(id: string, name: string, createdAt: number) {
       autoDailyCap: null,
       createdAt,
       updatedAt: createdAt,
-    })
-    .run();
+    });
 }
 
 async function insertDraft(id: string, campaignId: string | null, channel: string, state: string) {
@@ -95,8 +94,7 @@ async function insertDraft(id: string, campaignId: string | null, channel: strin
       content: "c",
       createdAt: T_CREATED,
       updatedAt: T_CREATED,
-    })
-    .run();
+    });
 }
 
 async function insertPublication(
@@ -121,8 +119,7 @@ async function insertPublication(
       externalId: `ext-${id}`,
       createdAt: T_CREATED,
       updatedAt: T_CREATED,
-    })
-    .run();
+    });
 }
 
 async function insertPubMetric(
@@ -150,12 +147,11 @@ async function insertPubMetric(
       clicks: values.clicks ?? null,
       capturedAt,
       createdAt: capturedAt,
-    })
-    .run();
+    });
 }
 
 beforeAll(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   app = await buildAuthedApp({ db });
   workspaceId = (
     await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Snapshot WS" } })
@@ -200,8 +196,7 @@ beforeAll(async () => {
       { ...genBase, id: "gen-2", rating: "accepted" },
       { ...genBase, id: "gen-3", rating: "needs_edit" },
       { ...genBase, id: "gen-4", rating: null },
-    ])
-    .run();
+    ]);
 
   // --- Publications + platform snapshots -------------------------------------
   const connId = "conn-social-1";
@@ -215,8 +210,7 @@ beforeAll(async () => {
       configJson: "{}",
       createdAt: T_CREATED,
       updatedAt: T_CREATED,
-    })
-    .run();
+    });
 
   await insertPublication("pub-1", "d-li-1", connId, "published", T_PUBLISHED);
   await insertPublication("pub-2", "d-li-2", connId, "published", T_PUBLISHED);
@@ -254,8 +248,7 @@ beforeAll(async () => {
       name: "Tuezday Main",
       currency: "USD",
       createdAt: T_CREATED,
-    })
-    .run();
+    });
   await db.insert(adCampaigns)
     .values([
       {
@@ -278,8 +271,7 @@ beforeAll(async () => {
         lastSyncedAt: T_CREATED,
         createdAt: T_CREATED,
       },
-    ])
-    .run();
+    ]);
   await db.insert(adCampaignMetrics)
     .values([
       {
@@ -322,8 +314,7 @@ beforeAll(async () => {
         createdAt: T_CREATED,
         updatedAt: T_CREATED,
       },
-    ])
-    .run();
+    ]);
 
   // --- Manual engagement readings ---------------------------------------------
   await db.insert(engagementMetrics)
@@ -392,8 +383,7 @@ beforeAll(async () => {
         recordedAt: T_RECORDED_2,
         createdAt: T_RECORDED_2,
       },
-    ])
-    .run();
+    ]);
 
   // --- Outbound + replies -------------------------------------------------------
   await db.insert(launches)
@@ -405,16 +395,14 @@ beforeAll(async () => {
       channelsJson: "[]",
       createdAt: T_CREATED,
       updatedAt: T_CREATED,
-    })
-    .run();
+    });
   await db.insert(launchMessages)
     .values([
       { id: "lm-1", workspaceId, launchId: "launch-1", channel: "email", kind: "broadcast", status: "sent", createdAt: T_CREATED, updatedAt: T_CREATED },
       { id: "lm-2", workspaceId, launchId: "launch-1", channel: "email", kind: "broadcast", status: "sent", createdAt: T_CREATED, updatedAt: T_CREATED },
       { id: "lm-3", workspaceId, launchId: "launch-1", channel: "linkedin", kind: "broadcast", status: "sent", createdAt: T_CREATED, updatedAt: T_CREATED },
       { id: "lm-4", workspaceId, launchId: "launch-1", channel: "email", kind: "broadcast", status: "failed", createdAt: T_CREATED, updatedAt: T_CREATED },
-    ])
-    .run();
+    ]);
   await db.insert(connections)
     .values({
       id: "conn-inbox-1",
@@ -425,8 +413,7 @@ beforeAll(async () => {
       configJson: "{}",
       createdAt: T_CREATED,
       updatedAt: T_CREATED,
-    })
-    .run();
+    });
   const inboxBase = {
     workspaceId,
     connectionId: "conn-inbox-1",
@@ -444,8 +431,7 @@ beforeAll(async () => {
       { ...inboxBase, id: "inbox-2", externalId: "ie-2", launchMessageId: "lm-2" },
       // Unlinked item — never counted as a reply.
       { ...inboxBase, id: "inbox-3", externalId: "ie-3", launchMessageId: null },
-    ])
-    .run();
+    ]);
 
   // Mirror production boot: the backfill maps every legacy row into the
   // unified fact table (app.ts runs this at startup; fixtures landed after).

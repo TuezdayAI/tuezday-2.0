@@ -34,7 +34,7 @@ export async function createWebhook(
     enabled: true,
     createdAt: Date.now(),
   };
-  await db.insert(webhookSubscriptions).values(row).run();
+  await db.insert(webhookSubscriptions).values(row);
   return rowToSubscription(row);
 }
 
@@ -43,8 +43,7 @@ export async function listWebhooks(db: Db, workspaceId: string): Promise<Webhook
     .select()
     .from(webhookSubscriptions)
     .where(eq(webhookSubscriptions.workspaceId, workspaceId))
-    .orderBy(desc(webhookSubscriptions.createdAt))
-    .all())
+    .orderBy(desc(webhookSubscriptions.createdAt)))
     .map(rowToSubscription);
 }
 
@@ -53,23 +52,21 @@ export async function getWebhook(
   workspaceId: string,
   webhookId: string,
 ): Promise<WebhookSubscription | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(webhookSubscriptions)
-    .where(eq(webhookSubscriptions.id, webhookId))
-    .get();
+    .where(eq(webhookSubscriptions.id, webhookId)))[0];
   return row && row.workspaceId === workspaceId ? rowToSubscription(row) : undefined;
 }
 
 export async function setWebhookEnabled(db: Db, webhookId: string, enabled: boolean): Promise<void> {
   await db.update(webhookSubscriptions)
     .set({ enabled })
-    .where(eq(webhookSubscriptions.id, webhookId))
-    .run();
+    .where(eq(webhookSubscriptions.id, webhookId));
 }
 
 export async function deleteWebhook(db: Db, webhookId: string): Promise<void> {
-  await db.delete(webhookSubscriptions).where(eq(webhookSubscriptions.id, webhookId)).run();
+  await db.delete(webhookSubscriptions).where(eq(webhookSubscriptions.id, webhookId));
 }
 
 /**
@@ -91,7 +88,7 @@ export async function emitEvent(
     payloadJson: JSON.stringify(payload),
     createdAt: Date.now(),
   };
-  await db.insert(events).values(event).run();
+  await db.insert(events).values(event);
 
   const subscriptions = (await listWebhooks(db, workspaceId)).filter(
     (s) =>
@@ -138,8 +135,7 @@ export async function emitEvent(
         httpStatus,
         error,
         createdAt: Date.now(),
-      })
-      .run();
+      });
   }
   return event;
 }
@@ -154,8 +150,7 @@ export async function listEvents(db: Db, workspaceId: string, limit = 50): Promi
     .from(events)
     .where(eq(events.workspaceId, workspaceId))
     .orderBy(desc(events.createdAt))
-    .limit(limit)
-    .all();
+    .limit(limit);
   if (eventRows.length === 0) return [];
 
   const deliveryRows = await db
@@ -166,8 +161,7 @@ export async function listEvents(db: Db, workspaceId: string, limit = 50): Promi
         webhookDeliveries.eventId,
         eventRows.map((e) => e.id),
       ),
-    )
-    .all();
+    );
 
   return eventRows.map((e) => ({
     ...e,

@@ -17,7 +17,7 @@ import {
 import { createTestDb } from "./helpers";
 
 async function fixture() {
-  const db = createTestDb();
+  const db = await createTestDb();
   const workspaceId = "workspace-dedupe";
   await db.insert(workspaces)
     .values({
@@ -25,8 +25,7 @@ async function fixture() {
       name: "Dedupe",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
 
   async function source(id: string) {
     await db.insert(discoverySources)
@@ -41,8 +40,7 @@ async function fixture() {
         cursorJson: "{}",
         executionVersion: 1,
         createdAt: 1,
-      })
-      .run();
+      });
   }
 
   async function item(
@@ -79,8 +77,7 @@ async function fixture() {
         duplicateOfId: null,
         createdAt: 1,
         ...overrides,
-      })
-      .run();
+      });
   }
 
   await source("source-a");
@@ -149,8 +146,7 @@ async function dbMatches(
       score,
       reason: id,
       createdAt: 1,
-    })
-    .run();
+    });
 }
 
 describe("discovery dedupe source deletion", () => {
@@ -165,11 +161,10 @@ describe("discovery dedupe source deletion", () => {
       ),
     ).toBe(true);
 
-    const promoted = (await f.db
+    const promoted = ((await f.db
       .select()
       .from(discoveredItems)
-      .where(eq(discoveredItems.id, "survivor-oldest"))
-      .get())!;
+      .where(eq(discoveredItems.id, "survivor-oldest")))[0])!;
     expect(promoted).toMatchObject({
       id: "survivor-oldest",
       workspaceId: f.workspaceId,
@@ -196,17 +191,15 @@ describe("discovery dedupe source deletion", () => {
     expect(
       (await f.db
         .select()
-        .from(discoveredItemMatches)
-        .all())
+        .from(discoveredItemMatches))
         .map((row) => row.itemId)
         .sort(),
     ).toEqual(["survivor-oldest", "survivor-oldest"]);
     expect(
-      (await f.db
+      ((await f.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, "survivor-newer"))
-        .get())!.duplicateOfId,
+        .where(eq(discoveredItems.id, "survivor-newer")))[0])!.duplicateOfId,
     ).toBe("survivor-oldest");
   });
 
@@ -222,8 +215,7 @@ describe("discovery dedupe source deletion", () => {
         name: "Field CTO",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     await f.db
       .insert(campaigns)
       .values({
@@ -232,19 +224,16 @@ describe("discovery dedupe source deletion", () => {
         name: "Launch",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     await f.db
       .update(discoveredItemMatches)
       .set({ personaId: "persona-live", campaignId: "campaign-live" })
-      .where(eq(discoveredItemMatches.id, "match-a"))
-      .run();
+      .where(eq(discoveredItemMatches.id, "match-a"));
     // the legacy columns are already gone (as Task 7's migration will leave them)
     await f.db
       .update(discoveredItems)
       .set({ suggestedPersonaId: null, suggestedCampaignId: null })
-      .where(eq(discoveredItems.id, "canonical"))
-      .run();
+      .where(eq(discoveredItems.id, "canonical"));
 
     expect(
       await deleteDiscoverySourcePreservingDuplicates(f.db, f.workspaceId, "source-a"),
@@ -259,20 +248,19 @@ describe("discovery dedupe source deletion", () => {
     expect(promoted.suggestedPersonaId).toBe("persona-live");
     expect(promoted.suggestedCampaignId).toBe("campaign-live");
     expect(
-      (await f.db
+      ((await f.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, "survivor-oldest"))
-        .get())!.suggestedPersonaId,
+        .where(eq(discoveredItems.id, "survivor-oldest")))[0])!.suggestedPersonaId,
     ).toBeNull();
   });
 
   it("rolls back promotion and repointing when source deletion faults", async () => {
     const f = await canonicalGroup();
     const before = {
-      sources: await f.db.select().from(discoverySources).all(),
-      items: await f.db.select().from(discoveredItems).all(),
-      matches: await f.db.select().from(discoveredItemMatches).all(),
+      sources: await f.db.select().from(discoverySources),
+      items: await f.db.select().from(discoveredItems),
+      matches: await f.db.select().from(discoveredItemMatches),
     };
 
     expect(async () =>
@@ -288,11 +276,11 @@ describe("discovery dedupe source deletion", () => {
       ),
     ).toThrow("delete fault");
 
-    expect(await f.db.select().from(discoverySources).all()).toEqual(
+    expect(await f.db.select().from(discoverySources)).toEqual(
       before.sources,
     );
-    expect(await f.db.select().from(discoveredItems).all()).toEqual(before.items);
-    expect(await f.db.select().from(discoveredItemMatches).all()).toEqual(
+    expect(await f.db.select().from(discoveredItems)).toEqual(before.items);
+    expect(await f.db.select().from(discoveredItemMatches)).toEqual(
       before.matches,
     );
   });
@@ -308,18 +296,16 @@ describe("discovery dedupe source deletion", () => {
       ),
     ).toBe(true);
     expect(
-      await f.db
-        .select()
-        .from(discoveredItems)
-        .where(eq(discoveredItems.id, "canonical"))
-        .get(),
-    ).toBeDefined();
-    expect(
       (await f.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, "survivor-oldest"))
-        .get())!.duplicateOfId,
+        .where(eq(discoveredItems.id, "canonical")))[0],
+    ).toBeDefined();
+    expect(
+      ((await f.db
+        .select()
+        .from(discoveredItems)
+        .where(eq(discoveredItems.id, "survivor-oldest")))[0])!.duplicateOfId,
     ).toBe("canonical");
   });
 
@@ -335,11 +321,10 @@ describe("discovery dedupe source deletion", () => {
       ),
     ).toBe(true);
     expect(
-      await f.db
+      (await f.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, "only-item"))
-        .get(),
+        .where(eq(discoveredItems.id, "only-item")))[0],
     ).toBeUndefined();
   });
 });
@@ -379,11 +364,10 @@ describe("legacy dangling duplicate repair", () => {
       repointed: 1,
     });
     expect(
-      await f.db
+      (await f.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, "dangling-oldest"))
-        .get(),
+        .where(eq(discoveredItems.id, "dangling-oldest")))[0],
     ).toMatchObject({
       status: "new",
       score: null,
@@ -398,11 +382,10 @@ describe("legacy dangling duplicate repair", () => {
       duplicateOfId: null,
     });
     expect(
-      await f.db
+      (await f.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, "dangling-newer"))
-        .get(),
+        .where(eq(discoveredItems.id, "dangling-newer")))[0],
     ).toMatchObject({
       status: "duplicate",
       matchingState: "frozen",
@@ -412,14 +395,14 @@ describe("legacy dangling duplicate repair", () => {
       matchingError: null,
       duplicateOfId: "dangling-oldest",
     });
-    expect(await f.db.select().from(discoveredItemMatches).all()).toEqual([]);
+    expect(await f.db.select().from(discoveredItemMatches)).toEqual([]);
 
-    const stableRows = await f.db.select().from(discoveredItems).all();
+    const stableRows = await f.db.select().from(discoveredItems);
     expect(await repairDanglingDuplicateGroups(f.db)).toEqual({
       groups: 0,
       promoted: 0,
       repointed: 0,
     });
-    expect(await f.db.select().from(discoveredItems).all()).toEqual(stableRows);
+    expect(await f.db.select().from(discoveredItems)).toEqual(stableRows);
   });
 });

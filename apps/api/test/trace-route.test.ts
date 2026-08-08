@@ -45,7 +45,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
   let campaignId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Acme" } })
@@ -87,8 +87,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         provider: "google",
         durationMs: 900,
         createdAt: 20,
-      })
-      .run();
+      });
     await db.insert(drafts)
       .values({
         id: draftId,
@@ -102,8 +101,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         state: "pending_review",
         createdAt: 21,
         updatedAt: 21,
-      })
-      .run();
+      });
     return draftId;
   }
 
@@ -191,8 +189,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         status: "generated",
         createdAt: 30,
         updatedAt: 30,
-      })
-      .run();
+      });
     const snapshotId = randomUUID();
     await db.insert(contextSnapshots)
       .values({
@@ -205,8 +202,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         model: "gemini-2.5-flash",
         provider: "google",
         createdAt: 31,
-      })
-      .run();
+      });
     await db.insert(variants)
       .values({
         id: randomUUID(),
@@ -221,8 +217,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         durationMs: 500,
         selectedAt: 32,
         createdAt: 32,
-      })
-      .run();
+      });
 
     const res = await app.inject({ method: "GET", url: traceUrl("deliverable", deliverableId) });
     expect(res.statusCode).toBe(200);
@@ -246,8 +241,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         content: "Short posts on X.",
         createdAt: 1,
         updatedAt: 2,
-      })
-      .run();
+      });
     const res = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/knob-usage` });
     expect(res.statusCode).toBe(200);
     const report = knobUsageReportSchema.parse(res.json());

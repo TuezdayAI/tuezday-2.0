@@ -70,11 +70,10 @@ async function newThread(goal = ""): Promise<string> {
 }
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   workspaceId = randomUUID();
   await db.insert(workspaces)
-    .values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 });
   await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
   campaignId = (await createCampaign(
     db,
@@ -169,7 +168,7 @@ describe("a grounded turn", () => {
     const result = await runChatTurn(db, deps(llm), workspaceId, ACTOR, sessionId, "Who do we target?");
 
     expect(result?.agentRunId).toBeTruthy();
-    const run = await db.select().from(agentRuns).where(eq(agentRuns.id, result!.agentRunId!)).get();
+    const run = (await db.select().from(agentRuns).where(eq(agentRuns.id, result!.agentRunId!)))[0];
     expect(run?.task).toBe("chat");
     expect(run?.createdBy).toBe("user:user-1");
     expect(run?.workspaceId).toBe(workspaceId);
@@ -177,8 +176,7 @@ describe("a grounded turn", () => {
     const steps = await db
       .select()
       .from(agentRunSteps)
-      .where(eq(agentRunSteps.runId, result!.agentRunId!))
-      .all();
+      .where(eq(agentRunSteps.runId, result!.agentRunId!));
     expect(steps.some((s) => s.kind === "tool_call" && s.toolName === "list_personas")).toBe(true);
 
     // The assistant message links to it — this is the Agent Inspector entry.
@@ -338,8 +336,7 @@ describe("thread accounting", () => {
     const sessionId = await newThread();
     await db.update(chatSessions)
       .set({ totalInputTokens: CHAT_THREAD_TOKEN_CAP, totalOutputTokens: 0 })
-      .where(eq(chatSessions.id, sessionId))
-      .run();
+      .where(eq(chatSessions.id, sessionId));
 
     const session = (await getSession(db, workspaceId, sessionId))!;
     const { isThreadBudgetExhausted } = await import("../src/services/chat");
@@ -348,7 +345,7 @@ describe("thread accounting", () => {
 
   it("returns undefined for a thread in another workspace", async () => {
     const other = randomUUID();
-    await db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 }).run();
+    await db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 });
     const sessionId = await newThread();
 
     const result = await runChatTurn(

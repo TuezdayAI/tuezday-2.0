@@ -96,8 +96,7 @@ async function logDecision(
       actorId: actor.userId,
       reason,
       createdAt: Date.now(),
-    })
-    .run();
+    });
   return id;
 }
 
@@ -121,11 +120,10 @@ export async function draftForGeneration(
   workspaceId: string,
   generationId: string,
 ): Promise<Draft | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.sourceGenerationId, generationId)))
-    .get();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.sourceGenerationId, generationId))))[0];
   return row ? rowToDraft(row) : undefined;
 }
 
@@ -160,11 +158,10 @@ async function insertSubmittedDraft(
   // Carry the source generation's pre-review (Sprint 22) onto the draft so the
   // approval queue is self-contained — the review shows in Review without a join.
   const sourceReviewJson = input.sourceGenerationId
-    ? ((await db
+    ? (((await db
         .select({ reviewJson: generations.reviewJson })
         .from(generations)
-        .where(eq(generations.id, input.sourceGenerationId))
-        .get())?.reviewJson ?? null)
+        .where(eq(generations.id, input.sourceGenerationId)))[0])?.reviewJson ?? null)
     : null;
   const row: DraftRow = {
     id: randomUUID(),
@@ -188,8 +185,8 @@ async function insertSubmittedDraft(
   };
   const insert = db.insert(drafts).values(row);
   const inserted = ignoreConflict
-    ? await insert.onConflictDoNothing().returning().get()
-    : await insert.returning().get();
+    ? (await insert.onConflictDoNothing().returning())[0]
+    : (await insert.returning())[0];
   if (!inserted) return null;
   await logDecision(db, row, actor, "submit", "draft", toState);
   return inserted;
@@ -233,11 +230,10 @@ export async function submitAutomaticDraft(
       true,
     );
     if (!inserted) {
-      const existing = await tx
+      const existing = (await tx
         .select()
         .from(drafts)
-        .where(eq(drafts.automationKey, input.automationKey))
-        .get();
+        .where(eq(drafts.automationKey, input.automationKey)))[0];
       if (!existing) throw new Error("automatic_draft_conflict");
       return {
         draft: rowToDraft(existing),
@@ -270,17 +266,15 @@ export async function setDraftMedia(
   draftId: string,
   media: LaunchMedia[],
 ): Promise<Draft | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
-    .get();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))))[0];
   if (!row) return undefined;
   const now = Date.now();
   await db.update(drafts)
     .set({ mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now })
-    .where(eq(drafts.id, draftId))
-    .run();
+    .where(eq(drafts.id, draftId));
   return rowToDraft({ ...row, mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now });
 }
 
@@ -297,17 +291,15 @@ export async function listDrafts(
     .select()
     .from(drafts)
     .where(and(...conditions))
-    .orderBy(desc(drafts.createdAt))
-    .all())
+    .orderBy(desc(drafts.createdAt)))
     .map(rowToDraft);
 }
 
 export async function getDraft(db: Db, workspaceId: string, draftId: string): Promise<Draft | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
-    .get();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))))[0];
   return row ? rowToDraft(row) : undefined;
 }
 
@@ -316,8 +308,7 @@ export async function listDecisions(db: Db, draftId: string): Promise<ApprovalDe
     .select()
     .from(approvalDecisions)
     .where(eq(approvalDecisions.draftId, draftId))
-    .orderBy(asc(approvalDecisions.createdAt))
-    .all())
+    .orderBy(asc(approvalDecisions.createdAt)))
     .map((row) => ({
       ...row,
       action: row.action as ApprovalAction,
@@ -358,15 +349,14 @@ export async function humanApprovalCoveringDraft(
   workspaceId: string,
   draftId: string,
 ): Promise<CoveringHumanApproval | null> {
-  const draft = await db
+  const draft = (await db
     .select({ state: drafts.state, content: drafts.content, mediaJson: drafts.mediaJson })
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
-    .get();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))))[0];
   if (draft?.state !== "approved") return null;
 
   const approveAction: ApprovalAction = "approve";
-  const latest = await db
+  const latest = (await db
     .select({
       contentFingerprint: approvalDecisions.contentFingerprint,
       actor: approvalDecisions.actor,
@@ -390,8 +380,7 @@ export async function humanApprovalCoveringDraft(
     // cannot reach a second approve decision through the API. Sprint 74 kept
     // the term rather than dropping it — `seq` replaced SQLite's rowid, so the
     // invariant survives if an un-approve path is ever added.
-    .orderBy(desc(approvalDecisions.createdAt), desc(approvalDecisions.seq))
-    .get();
+    .orderBy(desc(approvalDecisions.createdAt), desc(approvalDecisions.seq)))[0];
   if (!latest?.contentFingerprint) return null;
 
   const current = draftApprovalFingerprint({
@@ -462,18 +451,16 @@ export async function applyDraftActionInTransaction(
           id: draft.id,
           content,
           mediaJson:
-            (await db
+            ((await db
               .select({ mediaJson: drafts.mediaJson })
               .from(drafts)
-              .where(and(eq(drafts.workspaceId, draft.workspaceId), eq(drafts.id, draft.id)))
-              .get())?.mediaJson ?? null,
+              .where(and(eq(drafts.workspaceId, draft.workspaceId), eq(drafts.id, draft.id))))[0])?.mediaJson ?? null,
         })
       : null;
 
   await db.update(drafts)
     .set({ state: toState, content, updatedAt: now })
-    .where(eq(drafts.id, draft.id))
-    .run();
+    .where(eq(drafts.id, draft.id));
   const decisionId = await logDecision(
     db,
     draft,

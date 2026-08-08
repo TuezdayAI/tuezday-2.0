@@ -11,8 +11,7 @@ export async function listChannels(db: Db, workspaceId: string): Promise<Notific
   return await db
     .select()
     .from(notificationChannels)
-    .where(eq(notificationChannels.workspaceId, workspaceId))
-    .all();
+    .where(eq(notificationChannels.workspaceId, workspaceId));
 }
 
 export async function upsertChannel(
@@ -21,7 +20,7 @@ export async function upsertChannel(
   input: CreateNotificationChannelInput,
 ): Promise<NotificationChannelRow> {
   // Try to find if one with same type/target exists
-  const existing = await db
+  const existing = (await db
     .select()
     .from(notificationChannels)
     .where(
@@ -30,14 +29,12 @@ export async function upsertChannel(
         eq(notificationChannels.type, input.type),
         eq(notificationChannels.target, input.target),
       ),
-    )
-    .get();
+    ))[0];
 
   if (existing) {
     await db.update(notificationChannels)
       .set({ enabled: input.enabled })
-      .where(eq(notificationChannels.id, existing.id))
-      .run();
+      .where(eq(notificationChannels.id, existing.id));
     return { ...existing, enabled: input.enabled };
   }
 
@@ -51,8 +48,7 @@ export async function upsertChannel(
       target: input.target,
       enabled: input.enabled,
       createdAt: now,
-    })
-    .run();
+    });
 
   return {
     id,
@@ -71,8 +67,7 @@ export async function deleteChannel(db: Db, workspaceId: string, channelId: stri
         eq(notificationChannels.workspaceId, workspaceId),
         eq(notificationChannels.id, channelId),
       ),
-    )
-    .run();
+    );
 }
 
 export async function notifyDraftPending(

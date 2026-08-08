@@ -76,7 +76,7 @@ describe("canonical stories (Sprint 60)", () => {
   beforeEach(async () => {
     for (const key of Object.keys(feeds)) delete feeds[key];
     feeds["https://feeds.example.com/a.xml"] = FEED_A;
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: stubLlm, safeFetch: mapFetcher(feeds) });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Stories" } })
@@ -114,8 +114,7 @@ describe("canonical stories (Sprint 60)", () => {
       const unfetched = (await db
         .select()
         .from(discoverySources)
-        .where(eq(discoverySources.workspaceId, workspaceId))
-        .all())
+        .where(eq(discoverySources.workspaceId, workspaceId)))
         .filter((source) => source.lastFetchedAt === null);
       if (unfetched.length === 0) return summary;
     }
@@ -144,7 +143,7 @@ describe("canonical stories (Sprint 60)", () => {
     await addRssSource("https://feeds.example.com/a.xml");
     await run();
 
-    const occurrences = await db.select().from(discoverySourceOccurrences).all();
+    const occurrences = await db.select().from(discoverySourceOccurrences);
     expect(occurrences).toHaveLength(2);
     for (const occurrence of occurrences) {
       expect(occurrence.workspaceId).toBe(workspaceId);
@@ -163,7 +162,7 @@ describe("canonical stories (Sprint 60)", () => {
       expect(story.status).toBe("active");
     }
 
-    const memberships = await db.select().from(storyOccurrences).all();
+    const memberships = await db.select().from(storyOccurrences);
     expect(memberships).toHaveLength(2);
     for (const membership of memberships) {
       expect(membership.relationshipKind).toBe("exact");
@@ -177,16 +176,16 @@ describe("canonical stories (Sprint 60)", () => {
     await addRssSource("https://feeds.example.com/a.xml");
     await run();
     const before = {
-      occurrences: (await db.select().from(discoverySourceOccurrences).all()).length,
-      stories: (await db.select().from(canonicalExternalStories).all()).length,
-      memberships: (await db.select().from(storyOccurrences).all()).length,
-      enrichments: (await db.select().from(storyEnrichments).all()).length,
+      occurrences: (await db.select().from(discoverySourceOccurrences)).length,
+      stories: (await db.select().from(canonicalExternalStories)).length,
+      memberships: (await db.select().from(storyOccurrences)).length,
+      enrichments: (await db.select().from(storyEnrichments)).length,
     };
     await run();
-    expect(await db.select().from(discoverySourceOccurrences).all()).toHaveLength(before.occurrences);
-    expect(await db.select().from(canonicalExternalStories).all()).toHaveLength(before.stories);
-    expect(await db.select().from(storyOccurrences).all()).toHaveLength(before.memberships);
-    expect(await db.select().from(storyEnrichments).all()).toHaveLength(before.enrichments);
+    expect(await db.select().from(discoverySourceOccurrences)).toHaveLength(before.occurrences);
+    expect(await db.select().from(canonicalExternalStories)).toHaveLength(before.stories);
+    expect(await db.select().from(storyOccurrences)).toHaveLength(before.memberships);
+    expect(await db.select().from(storyEnrichments)).toHaveLength(before.enrichments);
   });
 
   it("converges cross-source copies into one story with provenance-typed memberships", async () => {
@@ -206,7 +205,7 @@ describe("canonical stories (Sprint 60)", () => {
 
     // 5 occurrences total; the four copies of story A converge, story B stands
     // alone — exact identity, zero false merges.
-    expect(await db.select().from(discoverySourceOccurrences).all()).toHaveLength(5);
+    expect(await db.select().from(discoverySourceOccurrences)).toHaveLength(5);
     const { stories, total } = await listStoriesHttp();
     expect(total).toBe(2);
     const storyA = stories.find((s) => s.occurrenceCount === 4)!;
@@ -241,8 +240,7 @@ describe("canonical stories (Sprint 60)", () => {
     const occurrences = await db
       .select()
       .from(discoverySourceOccurrences)
-      .where(eq(discoverySourceOccurrences.sourceId, second.id))
-      .all();
+      .where(eq(discoverySourceOccurrences.sourceId, second.id));
     expect(occurrences).toHaveLength(1);
     expect(occurrences[0]!.sourceName).toBeTruthy();
     expect(occurrences[0]!.sourceType).toBe("rss");
@@ -273,16 +271,15 @@ describe("canonical stories (Sprint 60)", () => {
     expect(manual.relationship.attachedByUserId).not.toBeNull();
     expect(manual.relationship.attachReason).toBe("Same launch covered twice");
 
-    const fromRow = (await db
+    const fromRow = ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, first.id))
-      .get())!;
+      .where(eq(canonicalExternalStories.id, first.id)))[0])!;
     expect(fromRow.status).toBe("archived");
     expect(fromRow.mergedIntoStoryId).toBe(second.id);
 
     // The closed membership survives as history.
-    const closed = (await db.select().from(storyOccurrences).all()).filter((m) => m.detachedAt !== null);
+    const closed = (await db.select().from(storyOccurrences)).filter((m) => m.detachedAt !== null);
     expect(closed).toHaveLength(1);
     expect(closed[0]!.detachReason).toBe("Same launch covered twice");
 
@@ -299,9 +296,9 @@ describe("canonical stories (Sprint 60)", () => {
     expect(splitDetail.occurrences[0]!.relationship.kind).toBe("manual");
 
     // Membership rows only ever accumulate: 2 founding + 1 merge + 1 split.
-    expect(await db.select().from(storyOccurrences).all()).toHaveLength(4);
+    expect(await db.select().from(storyOccurrences)).toHaveLength(4);
     // Occurrences were never touched.
-    expect(await db.select().from(discoverySourceOccurrences).all()).toHaveLength(2);
+    expect(await db.select().from(discoverySourceOccurrences)).toHaveLength(2);
   });
 
   it("appends immutable enrichment rows as membership changes", async () => {
@@ -315,8 +312,7 @@ describe("canonical stories (Sprint 60)", () => {
     const enrichedBefore = await db
       .select()
       .from(storyEnrichments)
-      .where(eq(storyEnrichments.storyId, second.id))
-      .all();
+      .where(eq(storyEnrichments.storyId, second.id));
     expect(enrichedBefore).toHaveLength(1);
 
     await app.inject({
@@ -328,16 +324,14 @@ describe("canonical stories (Sprint 60)", () => {
     const enrichedAfter = await db
       .select()
       .from(storyEnrichments)
-      .where(eq(storyEnrichments.storyId, second.id))
-      .all();
+      .where(eq(storyEnrichments.storyId, second.id));
     // Old row retained, new fingerprint appended.
     expect(enrichedAfter).toHaveLength(2);
     expect(new Set(enrichedAfter.map((e) => e.storyFingerprint)).size).toBe(2);
-    const storyRow = (await db
+    const storyRow = ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, second.id))
-      .get())!;
+      .where(eq(canonicalExternalStories.id, second.id)))[0])!;
     expect(storyRow.currentEnrichmentVersion).toBe(1);
   });
 
@@ -413,11 +407,11 @@ describe("canonical stories (Sprint 60)", () => {
     await addRssSource("https://feeds.example.com/a.xml");
     await run();
     // Simulate pre-Sprint-60 history: wipe the shadow layer, keep the items.
-    await db.delete(storyEnrichments).run();
-    await db.delete(storyOccurrences).run();
-    await db.delete(canonicalStoryKeys).run();
-    await db.delete(canonicalExternalStories).run();
-    await db.delete(discoverySourceOccurrences).run();
+    await db.delete(storyEnrichments);
+    await db.delete(storyOccurrences);
+    await db.delete(canonicalStoryKeys);
+    await db.delete(canonicalExternalStories);
+    await db.delete(discoverySourceOccurrences);
 
     const first = await app.inject({
       method: "POST",
@@ -432,12 +426,11 @@ describe("canonical stories (Sprint 60)", () => {
       membershipsCreated: 2,
     });
     // Backfilled occurrences carry the item's original observation time.
-    const item = (await db.select().from(discoveredItems).all())[0]!;
-    const occurrence = (await db
+    const item = (await db.select().from(discoveredItems))[0]!;
+    const occurrence = ((await db
       .select()
       .from(discoverySourceOccurrences)
-      .where(eq(discoverySourceOccurrences.providerExternalId, item.externalId))
-      .get())!;
+      .where(eq(discoverySourceOccurrences.providerExternalId, item.externalId)))[0])!;
     expect(occurrence.observedAt).toBe(item.createdAt);
     expect(occurrence.fetchRunId).toBeNull();
 
@@ -473,8 +466,7 @@ describe("canonical stories (Sprint 60)", () => {
 describe("canonical stories service (pure db)", () => {
   async function seedWorkspace(db: Db, id: string) {
     await db.insert(workspaces)
-      .values({ id, name: id, createdAt: 1, updatedAt: 1 })
-      .run();
+      .values({ id, name: id, createdAt: 1, updatedAt: 1 });
     await db.insert(discoverySources)
       .values({
         id: `${id}-source`,
@@ -492,8 +484,7 @@ describe("canonical stories service (pure db)", () => {
         lastAttemptedAt: null,
         executionVersion: 1,
         createdAt: 1,
-      })
-      .run();
+      });
   }
 
   async function seedItem(
@@ -531,12 +522,11 @@ describe("canonical stories service (pure db)", () => {
         contentHash: "",
         duplicateOfId: input.duplicateOfId ?? null,
         createdAt: input.createdAt ?? 1_000,
-      })
-      .run();
+      });
   }
 
   it("converges legacy duplicate groups — including dangling ones — via identity keys", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db, "ws-backfill");
     await seedItem(db, "ws-backfill", {
       id: "item-canonical",
@@ -573,14 +563,14 @@ describe("canonical stories service (pure db)", () => {
       storiesCreated: 1,
       membershipsCreated: 3,
     });
-    const story = await db.select().from(canonicalExternalStories).all();
+    const story = await db.select().from(canonicalExternalStories);
     expect(story).toHaveLength(1);
     expect(story[0]!.firstObservedAt).toBe(1_000);
     expect(story[0]!.lastObservedAt).toBe(3_000);
   });
 
   it("scopes identity keys per workspace — the same URL makes two stories", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db, "ws-one");
     await seedWorkspace(db, "ws-two");
     for (const workspaceId of ["ws-one", "ws-two"]) {
@@ -598,7 +588,7 @@ describe("canonical stories service (pure db)", () => {
         observedAt: 5_000,
       });
     }
-    const stories = await db.select().from(canonicalExternalStories).all();
+    const stories = await db.select().from(canonicalExternalStories);
     expect(stories).toHaveLength(2);
     expect(new Set(stories.map((s) => s.workspaceId)).size).toBe(2);
   });

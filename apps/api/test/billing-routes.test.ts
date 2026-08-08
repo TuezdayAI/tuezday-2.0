@@ -45,7 +45,7 @@ describe("billing routes (Task 5)", () => {
   let db: any;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildApp({ db });
     process.env.STRIPE_SECRET_KEY = "test_key";
     process.env.STRIPE_PRICE_PRO = "price_pro";

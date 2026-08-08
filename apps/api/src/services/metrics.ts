@@ -12,9 +12,8 @@ import {
   type MetricWindow,
   type MetricWindowKindValue,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import { metrics, type MetricRow } from "../db/schema";
-
 // Sprint 55: the single write path into the unified metric fact table.
 // Every writer — manual entry, platform capture, ads sync, the backfill —
 // goes through here, so the vocabulary check and the upsert-on-grain
@@ -93,8 +92,7 @@ export async function recordMetric(db: Db, workspaceId: string, input: MetricInp
         source: input.source,
         capturedAt: input.capturedAt,
       },
-    })
-    .run();
+    });
   return true;
 }
 
@@ -134,9 +132,8 @@ export async function recordMetricIfAbsent(db: Db, workspaceId: string, input: M
       capturedAt: input.capturedAt,
       createdAt: now,
     })
-    .onConflictDoNothing()
-    .run();
-  return result.changes > 0;
+    .onConflictDoNothing();
+  return rowsAffected(result) > 0;
 }
 
 export async function listMetricsForSubject(
@@ -154,8 +151,7 @@ export async function listMetricsForSubject(
         eq(metrics.subjectType, subjectType),
         eq(metrics.subjectId, subjectId),
       ),
-    )
-    .all();
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -234,8 +230,7 @@ export async function summarizeMetrics(
   const rows = await db
     .select()
     .from(metrics)
-    .where(and(...conditions))
-    .all();
+    .where(and(...conditions));
 
   const wanted = new Set<MetricKey>(query.metricKeys ?? METRIC_KEYS);
   // key -> subjectId -> the rows that count toward its contribution.

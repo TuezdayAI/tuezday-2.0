@@ -75,7 +75,7 @@ export async function storeGeneration(db: DbExecutor, input: StoreGenerationInpu
     reviewJson: null,
     createdAt: Date.now(),
   };
-  await db.insert(generations).values(row).run();
+  await db.insert(generations).values(row);
   return rowToGeneration(row);
 }
 
@@ -84,8 +84,7 @@ export async function listGenerations(db: Db, workspaceId: string): Promise<Gene
     .select()
     .from(generations)
     .where(eq(generations.workspaceId, workspaceId))
-    .orderBy(desc(generations.createdAt))
-    .all())
+    .orderBy(desc(generations.createdAt)))
     .map(rowToGeneration);
 }
 
@@ -95,18 +94,16 @@ export async function rateGeneration(
   generationId: string,
   rating: OutputRating,
 ): Promise<GenerationWithTrace | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(generations)
-    .where(and(eq(generations.workspaceId, workspaceId), eq(generations.id, generationId)))
-    .get();
+    .where(and(eq(generations.workspaceId, workspaceId), eq(generations.id, generationId))))[0];
   if (!row) return undefined;
 
   const ratedAt = Date.now();
   await db.update(generations)
     .set({ rating, ratedAt })
-    .where(eq(generations.id, generationId))
-    .run();
+    .where(eq(generations.id, generationId));
   return rowToGeneration({ ...row, rating, ratedAt });
 }
 
@@ -114,7 +111,6 @@ export async function countGenerationsSince(db: Db, workspaceId: string, sinceMs
   return (await db
     .select()
     .from(generations)
-    .where(and(eq(generations.workspaceId, workspaceId), gte(generations.createdAt, sinceMs)))
-    .all())
+    .where(and(eq(generations.workspaceId, workspaceId), gte(generations.createdAt, sinceMs))))
     .length;
 }

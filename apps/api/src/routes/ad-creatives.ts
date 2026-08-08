@@ -223,8 +223,7 @@ export function registerAdCreativeRoutes(
     const rows = await db
       .select()
       .from(drafts)
-      .where(and(...conditions))
-      .all();
+      .where(and(...conditions));
 
     const campaignName = new Map((await listCampaigns(db, request.params.id)).map((c) => [c.id, c.name]));
     const format = AD_CREATIVE_FORMATS[taskType];

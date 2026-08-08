@@ -39,7 +39,7 @@ describe("design systems (Sprint 41 Part 2)", () => {
   let campaignId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: fakeGateway() });
     const ws = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Design" } });
     workspaceId = ws.json().id;

@@ -61,16 +61,14 @@ async function addRule(db: Db, overrides: RuleOverrides): Promise<string> {
       retiredAt: null,
       createdAt: 1,
       updatedAt: 20,
-    })
-    .run();
+    });
   return overrides.id;
 }
 
 async function seed(): Promise<Db> {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Promote", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Promote", createdAt: 1, updatedAt: 1 });
   // Something for the synthesis to chew on, so it does not throw NothingToLearn.
   await createMetric(db, WORKSPACE_ID, {
     channel: "linkedin",
@@ -136,8 +134,7 @@ describe("preference promotion through the weekly synthesis (Sprint 68)", () => 
     const rows = await db
       .select()
       .from(preferenceRules)
-      .where(eq(preferenceRules.status, "active"))
-      .all();
+      .where(eq(preferenceRules.status, "active"));
     expect(rows).toHaveLength(0);
     expect((await getPreferenceRule(db, WORKSPACE_ID, ready))!.status).toBe("promoted");
   });

@@ -75,8 +75,8 @@ function parseFrames(payload: string): { type: string; data: Record<string, unkn
     });
 }
 
-beforeEach(() => {
-  db = createTestDb();
+beforeEach(async () => {
+  db = await createTestDb();
 });
 
 describe("threads", () => {
@@ -189,8 +189,7 @@ describe("sending a message", () => {
     const id = await newThread(app, workspaceId);
     await db.update(chatSessions)
       .set({ totalInputTokens: CHAT_THREAD_TOKEN_CAP })
-      .where(eq(chatSessions.id, id))
-      .run();
+      .where(eq(chatSessions.id, id));
 
     const res = await app.inject({
       method: "POST",

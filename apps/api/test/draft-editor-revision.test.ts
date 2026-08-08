@@ -76,7 +76,7 @@ describe("conversational draft revision API", () => {
         };
       },
     };
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({
       db,
       llm,
@@ -115,8 +115,7 @@ describe("conversational draft revision API", () => {
         mediaJson: null,
         createdAt: updatedAt,
         updatedAt,
-      })
-      .run();
+      });
   });
 
   afterEach(async () => {
@@ -145,7 +144,7 @@ describe("conversational draft revision API", () => {
   }
 
   const ledgerEvents = async () =>
-    (await db.select().from(llmUsageEvents).all()).filter((e) => e.workspaceId === workspaceId);
+    (await db.select().from(llmUsageEvents)).filter((e) => e.workspaceId === workspaceId);
 
   it("revises with current context and records the canonical edit decision", async () => {
     const beforeEvents = (await ledgerEvents()).length;
@@ -205,8 +204,7 @@ describe("conversational draft revision API", () => {
     await llmEntered.promise;
     await db.update(drafts)
       .set({ content: "Newer manual copy", updatedAt: updatedAt + 1 })
-      .where(eq(drafts.id, draftId))
-      .run();
+      .where(eq(drafts.id, draftId));
     llmRelease.resolve({
       text: "Late AI copy",
       model: "fake-model",
@@ -221,7 +219,7 @@ describe("conversational draft revision API", () => {
   });
 
   it.each(["approved", "rejected"] as const)("rejects revisions once the draft is %s", async (state) => {
-    await db.update(drafts).set({ state }).where(eq(drafts.id, draftId)).run();
+    await db.update(drafts).set({ state }).where(eq(drafts.id, draftId));
     const response = await revise();
     expect(response.statusCode).toBe(409);
     expect(response.json().error).toBe("invalid_transition");
@@ -284,7 +282,7 @@ describe("conversational draft revision API", () => {
       url: `/workspaces/${workspaceId}/guidance/linkedin`,
       payload: { content: "Lead with the customer proof point.", campaignId: campaign.id },
     });
-    await db.update(drafts).set({ campaignId: campaign.id }).where(eq(drafts.id, draftId)).run();
+    await db.update(drafts).set({ campaignId: campaign.id }).where(eq(drafts.id, draftId));
     expect((await revise()).statusCode).toBe(200);
     expect(prompts[0]).toContain("Lead with the customer proof point.");
   });

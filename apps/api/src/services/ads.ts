@@ -54,13 +54,11 @@ export async function listAdAccounts(db: Db, workspaceId: string): Promise<AdAcc
     .select()
     .from(adAccounts)
     .where(eq(adAccounts.workspaceId, workspaceId))
-    .orderBy(desc(adAccounts.createdAt))
-    .all();
+    .orderBy(desc(adAccounts.createdAt));
   const connectionRows = await db
     .select()
     .from(connections)
-    .where(eq(connections.workspaceId, workspaceId))
-    .all();
+    .where(eq(connections.workspaceId, workspaceId));
   const connectionById = new Map(connectionRows.map((c) => [c.id, c]));
   return rows.map((row) => {
     const connection = row.connectionId ? connectionById.get(row.connectionId) : undefined;
@@ -76,11 +74,10 @@ export async function listAdAccounts(db: Db, workspaceId: string): Promise<AdAcc
 }
 
 export async function getAdAccount(db: Db, workspaceId: string, accountId: string): Promise<AdAccount | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(adAccounts)
-    .where(and(eq(adAccounts.workspaceId, workspaceId), eq(adAccounts.id, accountId)))
-    .get();
+    .where(and(eq(adAccounts.workspaceId, workspaceId), eq(adAccounts.id, accountId))))[0];
   return row ? rowToAdAccount(row) : undefined;
 }
 
@@ -101,8 +98,7 @@ export async function importAdAccounts(
   const existing = await db
     .select()
     .from(adAccounts)
-    .where(eq(adAccounts.workspaceId, workspaceId))
-    .all();
+    .where(eq(adAccounts.workspaceId, workspaceId));
   const byExternalId = new Map(existing.map((row) => [row.externalId, row]));
 
   const now = Date.now();
@@ -123,7 +119,7 @@ export async function importAdAccounts(
         lastError: null,
         createdAt: now,
       };
-      await db.insert(adAccounts).values(fresh).run();
+      await db.insert(adAccounts).values(fresh);
       imported.push(rowToAdAccount(fresh));
       created++;
       continue;
@@ -131,8 +127,7 @@ export async function importAdAccounts(
     const changed = row.name !== account.name || row.currency !== account.currency;
     await db.update(adAccounts)
       .set({ name: account.name, currency: account.currency, connectionId })
-      .where(eq(adAccounts.id, row.id))
-      .run();
+      .where(eq(adAccounts.id, row.id));
     if (changed) updated++;
     imported.push(rowToAdAccount({ ...row, name: account.name, currency: account.currency, connectionId }));
   }
@@ -162,8 +157,7 @@ async function upsertMetrics(
   const campaignRows = await db
     .select()
     .from(adCampaigns)
-    .where(eq(adCampaigns.adAccountId, adAccountId))
-    .all();
+    .where(eq(adCampaigns.adAccountId, adAccountId));
   const campaignByExternalId = new Map(campaignRows.map((row) => [row.externalId, row]));
 
   const seenCampaigns = new Map<string, string>();
@@ -185,13 +179,12 @@ async function upsertMetrics(
         lastSyncedAt: now,
         createdAt: now,
       };
-      await db.insert(adCampaigns).values(fresh).run();
+      await db.insert(adCampaigns).values(fresh);
       campaignByExternalId.set(externalId, fresh);
     } else {
       await db.update(adCampaigns)
         .set({ name, lastSyncedAt: now })
-        .where(eq(adCampaigns.id, row.id))
-        .run();
+        .where(eq(adCampaigns.id, row.id));
       campaignByExternalId.set(externalId, { ...row, name });
     }
   }
@@ -202,7 +195,6 @@ async function upsertMetrics(
         .select()
         .from(adCampaignMetrics)
         .where(inArray(adCampaignMetrics.adCampaignId, campaignIds))
-        .all()
     : [];
   const metricByKey = new Map(metricRows.map((row) => [`${row.adCampaignId}|${row.date}`, row]));
 
@@ -226,8 +218,7 @@ async function upsertMetrics(
           source,
           createdAt: now,
           updatedAt: now,
-        })
-        .run();
+        });
       created++;
       continue;
     }
@@ -246,8 +237,7 @@ async function upsertMetrics(
           source,
           updatedAt: now,
         })
-        .where(eq(adCampaignMetrics.id, row.id))
-        .run();
+        .where(eq(adCampaignMetrics.id, row.id));
       updated++;
     }
   }
@@ -306,15 +296,13 @@ export async function syncAdAccount(
   } catch (err) {
     await db.update(adAccounts)
       .set({ lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500) })
-      .where(eq(adAccounts.id, account.id))
-      .run();
+      .where(eq(adAccounts.id, account.id));
     throw err;
   }
   const counts = await upsertMetrics(db, workspaceId, account.id, pulled.metrics, "sync");
   await db.update(adAccounts)
     .set({ lastSyncedAt: Date.now(), lastError: null })
-    .where(eq(adAccounts.id, account.id))
-    .run();
+    .where(eq(adAccounts.id, account.id));
   return { ...counts, truncated: pulled.truncated };
 }
 
@@ -328,13 +316,12 @@ export interface CsvImportResult {
 
 /** CSV rows land in a lazily-created CSV-only account (no connection). */
 export async function importAdsCsv(db: Db, workspaceId: string, input: AdsCsvImportInput): Promise<CsvImportResult> {
-  let account = await db
+  let account = (await db
     .select()
     .from(adAccounts)
     .where(
       and(eq(adAccounts.workspaceId, workspaceId), eq(adAccounts.externalId, CSV_ACCOUNT_EXTERNAL_ID)),
-    )
-    .get();
+    ))[0];
   if (!account) {
     const fresh: AdAccountRow = {
       id: randomUUID(),
@@ -347,10 +334,10 @@ export async function importAdsCsv(db: Db, workspaceId: string, input: AdsCsvImp
       lastError: null,
       createdAt: Date.now(),
     };
-    await db.insert(adAccounts).values(fresh).run();
+    await db.insert(adAccounts).values(fresh);
     account = fresh;
   } else if (input.accountName && input.accountName !== account.name) {
-    await db.update(adAccounts).set({ name: input.accountName }).where(eq(adAccounts.id, account.id)).run();
+    await db.update(adAccounts).set({ name: input.accountName }).where(eq(adAccounts.id, account.id));
   }
 
   const records: AdDailyMetricRecord[] = input.rows.map((row) => ({
@@ -364,7 +351,7 @@ export async function importAdsCsv(db: Db, workspaceId: string, input: AdsCsvImp
     conversions: row.conversions,
   }));
   const counts = await upsertMetrics(db, workspaceId, account.id, records, "csv");
-  await db.update(adAccounts).set({ lastSyncedAt: Date.now() }).where(eq(adAccounts.id, account.id)).run();
+  await db.update(adAccounts).set({ lastSyncedAt: Date.now() }).where(eq(adAccounts.id, account.id));
   return { accountId: account.id, ...counts };
 }
 
@@ -408,16 +395,15 @@ function addTotals(totals: AdsReportTotals, day: AdsReportTotals): AdsReportTota
 
 /** Per-ad-campaign totals + daily rows for the range, sorted by spend desc. */
 export async function getAdsReport(db: Db, workspaceId: string, since: string, until: string): Promise<AdsReport> {
-  const accountRows = await db.select().from(adAccounts).where(eq(adAccounts.workspaceId, workspaceId)).all();
+  const accountRows = await db.select().from(adAccounts).where(eq(adAccounts.workspaceId, workspaceId));
   const accountById = new Map(accountRows.map((row) => [row.id, row]));
   const campaignRows = await db
     .select()
     .from(adCampaigns)
-    .where(eq(adCampaigns.workspaceId, workspaceId))
-    .all();
+    .where(eq(adCampaigns.workspaceId, workspaceId));
   const linkedIds = campaignRows.map((row) => row.campaignId).filter((id): id is string => id !== null);
   const linkedRows = linkedIds.length
-    ? await db.select().from(campaigns).where(inArray(campaigns.id, linkedIds)).all()
+    ? await db.select().from(campaigns).where(inArray(campaigns.id, linkedIds))
     : [];
   const linkedById = new Map(linkedRows.map((row) => [row.id, row]));
   const metricRows = await db
@@ -430,8 +416,7 @@ export async function getAdsReport(db: Db, workspaceId: string, since: string, u
         lte(adCampaignMetrics.date, until),
       ),
     )
-    .orderBy(asc(adCampaignMetrics.date))
-    .all();
+    .orderBy(asc(adCampaignMetrics.date));
   const daysByCampaign = new Map<string, AdsReportDay[]>();
   for (const row of metricRows) {
     const day: AdsReportDay = {
@@ -471,11 +456,10 @@ export async function getAdsReport(db: Db, workspaceId: string, since: string, u
 }
 
 export async function getAdCampaign(db: Db, workspaceId: string, adCampaignId: string): Promise<AdCampaign | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(adCampaigns)
-    .where(and(eq(adCampaigns.workspaceId, workspaceId), eq(adCampaigns.id, adCampaignId)))
-    .get();
+    .where(and(eq(adCampaigns.workspaceId, workspaceId), eq(adCampaigns.id, adCampaignId))))[0];
   return row ? rowToAdCampaign(row) : undefined;
 }
 
@@ -487,8 +471,7 @@ export async function linkAdCampaign(
 ): Promise<AdCampaign | undefined> {
   await db.update(adCampaigns)
     .set({ campaignId })
-    .where(and(eq(adCampaigns.workspaceId, workspaceId), eq(adCampaigns.id, adCampaignId)))
-    .run();
+    .where(and(eq(adCampaigns.workspaceId, workspaceId), eq(adCampaigns.id, adCampaignId)));
   return await getAdCampaign(db, workspaceId, adCampaignId);
 }
 
@@ -510,15 +493,13 @@ export async function getCampaignAdMetrics(db: Db, campaign: Campaign): Promise<
     .from(adCampaigns)
     .where(
       and(eq(adCampaigns.workspaceId, campaign.workspaceId), eq(adCampaigns.campaignId, campaign.id)),
-    )
-    .all();
+    );
   if (linked.length === 0) return null;
 
   const accountRows = await db
     .select()
     .from(adAccounts)
-    .where(eq(adAccounts.workspaceId, campaign.workspaceId))
-    .all();
+    .where(eq(adAccounts.workspaceId, campaign.workspaceId));
   const accountById = new Map(accountRows.map((row) => [row.id, row]));
   // Sprint 55: paid totals read the unified fact table — ad_campaign-subject
   // 1d buckets — not the legacy per-day store. Identity (name,
@@ -534,8 +515,7 @@ export async function getCampaignAdMetrics(db: Db, campaign: Campaign): Promise<
         eq(metrics.window, "1d"),
         inArray(metrics.subjectId, linked.map((row) => row.id)),
       ),
-    )
-    .all();
+    );
 
   const byCampaign = new Map<string, AdsReportTotals>();
   for (const row of factRows) {

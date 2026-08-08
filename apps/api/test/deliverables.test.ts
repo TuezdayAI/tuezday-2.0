@@ -125,7 +125,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
   let userId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Deliver" } })
@@ -181,20 +181,18 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
         observedAt: Date.now(),
       });
     });
-    return (await db
+    return ((await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.title, title))
-      .get())!.id;
+      .where(eq(canonicalExternalStories.title, title)))[0])!.id;
   }
 
   async function seedOpportunity(storyId: string, angle: string): Promise<string> {
     const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
-    const story = (await db
+    const story = ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, storyId))
-      .get())!;
+      .where(eq(canonicalExternalStories.id, storyId)))[0])!;
     const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
@@ -225,8 +223,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
         expiresAt: null,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -248,7 +245,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     });
     expect(run.assessed).toBe(1);
     expect(
-      (await db.select().from(contentPackages).where(eq(contentPackages.id, packageId)).get())!
+      ((await db.select().from(contentPackages).where(eq(contentPackages.id, packageId)))[0])!
         .status,
     ).toBe("ready");
     return packageId;
@@ -262,8 +259,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     const rows = await db
       .select()
       .from(deliverables)
-      .orderBy(asc(deliverables.originalScheduledFor))
-      .all();
+      .orderBy(asc(deliverables.originalScheduledFor));
     expect(rows).toHaveLength(2);
     expect(rows.every((row) => row.status === "planned" && row.kind === "planned")).toBe(
       true,
@@ -280,7 +276,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
   it("materializes the full schedule when quantity covers it, with creation events", async () => {
     await activatePlan([plannedLane]);
     expect(await materializePlannedSlots(db, { workspaceId, now: NOW })).toBe(4);
-    const events = await db.select().from(deliverableEvents).all();
+    const events = await db.select().from(deliverableEvents);
     expect(events).toHaveLength(4);
     expect(events.every((event) => event.fromStatus === null && event.toStatus === "planned")).toBe(
       true,
@@ -301,8 +297,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     const rows = await db
       .select()
       .from(deliverables)
-      .orderBy(asc(deliverables.originalScheduledFor))
-      .all();
+      .orderBy(asc(deliverables.originalScheduledFor));
     const assigned = rows.filter((row) => row.packageId === packageId);
     expect(assigned).toHaveLength(1);
     // Oldest slot won.
@@ -312,7 +307,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     expect(assigned[0]!.angle).toBe("A grounded angle");
     // The package is stamped as fanned out.
     expect(
-      (await db.select().from(contentPackages).where(eq(contentPackages.id, packageId)).get())!
+      ((await db.select().from(contentPackages).where(eq(contentPackages.id, packageId)))[0])!
         .fannedOutAt,
     ).not.toBeNull();
   });
@@ -336,11 +331,10 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     ]);
     const fanned = await fanOutPackage(db, workspaceId, first, { userId });
     expect(fanned.deliverablesCreated).toBe(1);
-    const reactive = (await db
+    const reactive = ((await db
       .select()
       .from(deliverables)
-      .where(eq(deliverables.packageId, first))
-      .get())!;
+      .where(eq(deliverables.packageId, first)))[0])!;
     expect(reactive.kind).toBe("reactive");
     expect(reactive.status).toBe("ready");
     expect(reactive.originalScheduledFor).toBeNull();
@@ -379,7 +373,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
       deliverablesCreated: 0,
     });
     expect(
-      await db.select().from(deliverables).where(eq(deliverables.packageId, packageId)).all(),
+      await db.select().from(deliverables).where(eq(deliverables.packageId, packageId)),
     ).toHaveLength(1);
   });
 
@@ -390,7 +384,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     expect(await sweepStaleDeliverables(db, { workspaceId, now: NOW })).toBe(0);
     const staled = await sweepStaleDeliverables(db, { workspaceId, now: NOW + 20 * DAY_MS });
     expect(staled).toBe(2);
-    const rows = await db.select().from(deliverables).all();
+    const rows = await db.select().from(deliverables);
     expect(rows.every((row) => row.status === "stale")).toBe(true);
     // Terminal-ish: a stale deliverable cannot be cancelled without reason… it can, with one.
     const detail = await decideDeliverable(db, workspaceId, rows[0]!.id, {
@@ -415,17 +409,15 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
       actorUserId: userId,
     });
 
-    const assigned = (await db
+    const assigned = ((await db
       .select()
       .from(deliverables)
-      .where(eq(deliverables.packageId, packageId))
-      .get())!;
+      .where(eq(deliverables.packageId, packageId)))[0])!;
     expect(assigned.status).toBe("blocked");
     const events = await db
       .select()
       .from(deliverableEvents)
-      .where(eq(deliverableEvents.deliverableId, assigned.id))
-      .all();
+      .where(eq(deliverableEvents.deliverableId, assigned.id));
     expect(events.at(-1)).toMatchObject({
       fromStatus: "ready",
       toStatus: "blocked",
@@ -436,7 +428,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
   it("gates decisions through the machine: no cancel on fulfilled, no select on planned", async () => {
     await activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
     await materializePlannedSlots(db, { workspaceId, now: NOW });
-    const row = (await db.select().from(deliverables).all())[0]!;
+    const row = (await db.select().from(deliverables))[0]!;
     expect(async () =>
       await decideDeliverable(db, workspaceId, row.id, {
         action: "select",

@@ -73,8 +73,7 @@ export async function listConnections(db: Db, workspaceId: string): Promise<Conn
     .select()
     .from(connections)
     .where(eq(connections.workspaceId, workspaceId))
-    .orderBy(desc(connections.createdAt))
-    .all())
+    .orderBy(desc(connections.createdAt)))
     .map(rowToConnection);
 }
 
@@ -83,11 +82,10 @@ export async function getConnection(
   workspaceId: string,
   connectionId: string,
 ): Promise<Connection | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(connections)
-    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
-    .get();
+    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId))))[0];
   return row ? rowToConnection(row) : undefined;
 }
 
@@ -105,8 +103,7 @@ export async function updateConnection(
       timezone: input.timezone,
       updatedAt: Date.now(),
     })
-    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
-    .run();
+    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)));
   return await getConnection(db, workspaceId, connectionId);
 }
 
@@ -121,8 +118,7 @@ export async function setConnectionContentProfile(
   if (!existing) return undefined;
   await db.update(connections)
     .set({ contentProfileJson: JSON.stringify(profile), updatedAt: Date.now() })
-    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
-    .run();
+    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)));
   return await getConnection(db, workspaceId, connectionId);
 }
 
@@ -163,7 +159,7 @@ export async function registerOAuthConnection(
   provider: ConnectorProvider,
   nangoConnectionId: string,
 ): Promise<Connection> {
-  const existing = await db
+  const existing = (await db
     .select()
     .from(connections)
     .where(
@@ -171,8 +167,7 @@ export async function registerOAuthConnection(
         eq(connections.workspaceId, workspaceId),
         eq(connections.nangoConnectionId, nangoConnectionId),
       ),
-    )
-    .get();
+    ))[0];
   const now = Date.now();
 
   if (existing) {
@@ -184,8 +179,7 @@ export async function registerOAuthConnection(
         lastCheckedAt: now,
         updatedAt: now,
       })
-      .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, existing.id)))
-      .run();
+      .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, existing.id)));
     return (await getConnection(db, workspaceId, existing.id))!;
   }
 
@@ -208,7 +202,7 @@ export async function registerOAuthConnection(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(connections).values(row).run();
+  await db.insert(connections).values(row);
   return rowToConnection(row);
 }
 
@@ -255,8 +249,7 @@ export async function bindInstagramOAuthIdentity(
           eq(connections.workspaceId, connection.workspaceId),
           eq(connections.id, connection.id),
         ),
-      )
-      .run();
+      );
     throw new ProviderCapabilityError(
       "reconnect_required",
       "Instagram Login did not return a professional account identity.",
@@ -285,8 +278,7 @@ export async function bindInstagramOAuthIdentity(
         eq(connections.workspaceId, connection.workspaceId),
         eq(connections.id, connection.id),
       ),
-    )
-    .run();
+    );
   return (await getConnection(db, connection.workspaceId, connection.id))!;
 }
 
@@ -349,7 +341,7 @@ export async function connectProvider(
     createdAt: now,
     updatedAt: now,
   };
-  await db.insert(connections).values(row).run();
+  await db.insert(connections).values(row);
   return rowToConnection(row);
 }
 
@@ -404,8 +396,7 @@ export async function testConnection(
       lastError: result.ok ? null : result.detail.slice(0, 500),
       lastCheckedAt: Date.now(),
     })
-    .where(eq(connections.id, connection.id))
-    .run();
+    .where(eq(connections.id, connection.id));
   return result;
 }
 
@@ -423,6 +414,5 @@ export async function disconnectConnection(
   }
   await db.update(connections)
     .set({ status: "disconnected", lastCheckedAt: Date.now() })
-    .where(eq(connections.id, connection.id))
-    .run();
+    .where(eq(connections.id, connection.id));
 }

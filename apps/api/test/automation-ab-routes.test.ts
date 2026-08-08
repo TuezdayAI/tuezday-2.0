@@ -24,7 +24,7 @@ describe("automation A/B routes (Sprint 65)", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     rawApp = await buildApp({ db, workerToken: WORKER_TOKEN });
     founder = await registerUser(rawApp);
     app = asUser(rawApp, founder.token);
@@ -39,8 +39,7 @@ describe("automation A/B routes (Sprint 65)", () => {
         source: "manual",
         sourceUrl: null,
         createdAt: Date.now(),
-      })
-      .run();
+      });
   });
 
   async function seedPair() {
@@ -55,8 +54,7 @@ describe("automation A/B routes (Sprint 65)", () => {
         automationMode: "human_in_the_loop",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     const draftId = randomUUID();
     await db.insert(draftsTable)
       .values({
@@ -69,8 +67,7 @@ describe("automation A/B routes (Sprint 65)", () => {
         state: "pending_review",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     const definition = await createPipelineDefinition(
       db,
       workspaceId,
@@ -121,8 +118,7 @@ describe("automation A/B routes (Sprint 65)", () => {
         }),
         createdBy: "automation",
         createdAt: Date.now(),
-      })
-      .run();
+      });
     return await createShadowPair(db, {
       workspaceId,
       pairKey: shadowPairKey({

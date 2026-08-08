@@ -29,11 +29,9 @@ const FOUNDER = { userId: USER_ID, label: "Founder" };
 
 async function seed(db: Db): Promise<void> {
   await db.insert(users)
-    .values({ id: USER_ID, email: "founder@test.dev", name: "Founder", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: USER_ID, email: "founder@test.dev", name: "Founder", createdAt: 1, updatedAt: 1 });
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Asking", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Asking", createdAt: 1, updatedAt: 1 });
   await db.insert(pipelineDefinitions)
     .values({
       id: "44444444-4444-4444-8444-444444444444",
@@ -43,8 +41,7 @@ async function seed(db: Db): Promise<void> {
       specJson: "{}",
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   await db.insert(pipelineRuns)
     .values({
       id: PIPELINE_RUN_ID,
@@ -55,8 +52,7 @@ async function seed(db: Db): Promise<void> {
       channel: "linkedin",
       createdBy: "automation",
       createdAt: 1,
-    })
-    .run();
+    });
 }
 
 const ARGS = {
@@ -71,7 +67,7 @@ describe("the ask seam (Sprint 70)", () => {
   let questions: AgentQuestionService;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await seed(db);
     questions = createAgentQuestions({ db });
   });
@@ -114,14 +110,14 @@ describe("the ask seam (Sprint 70)", () => {
     if (second.status !== "answered") return;
     expect(second.answer).toBe("No — not until the round is public.");
     // And it did not file a second copy of a question already settled.
-    expect(await db.select().from(agentQuestions).all()).toHaveLength(1);
+    expect(await db.select().from(agentQuestions)).toHaveLength(1);
   });
 
   it("suspends on the existing row rather than duplicating an unanswered question", async () => {
     const first = await questions.ask(origin(), ARGS);
     const again = await questions.ask(origin(), ARGS);
     expect(again).toEqual(first);
-    expect(await db.select().from(agentQuestions).all()).toHaveLength(1);
+    expect(await db.select().from(agentQuestions)).toHaveLength(1);
   });
 
   it("counts the cap over the pipeline run, so resumes cannot reset it (D-70.4)", async () => {
@@ -141,7 +137,7 @@ describe("the ask seam (Sprint 70)", () => {
     if (overCap.status !== "refused") return;
     expect(overCap.error).toBe("question_cap_reached");
     // Refused as data, not recorded: a capped run must keep going, not stall.
-    expect(await db.select().from(agentQuestions).all()).toHaveLength(AGENT_QUESTIONS_PER_RUN);
+    expect(await db.select().from(agentQuestions)).toHaveLength(AGENT_QUESTIONS_PER_RUN);
   });
 
   it("refuses when the workspace already has too many unanswered questions", async () => {
@@ -160,8 +156,7 @@ describe("the ask seam (Sprint 70)", () => {
           fingerprint: `fp-${i}`,
           status: "open",
           createdAt: 1,
-        })
-        .run();
+        });
     }
     expect(await countOpenQuestions(db, WORKSPACE_ID)).toBe(AGENT_QUESTIONS_OPEN_MAX);
     const result = await questions.ask(origin(), ARGS);
@@ -185,7 +180,7 @@ describe("the ask seam (Sprint 70)", () => {
     const simulated = simulatedAgentQuestions();
     const result = await simulated.ask(origin(), ARGS);
     expect(result.status).toBe("simulated");
-    expect(await db.select().from(agentQuestions).all()).toHaveLength(0);
+    expect(await db.select().from(agentQuestions)).toHaveLength(0);
   });
 
   it("fingerprints by meaning, not by punctuation", () => {
@@ -205,7 +200,7 @@ describe("answering an agent question (Sprint 70)", () => {
   let questions: AgentQuestionService;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     await seed(db);
     questions = createAgentQuestions({ db });
   });

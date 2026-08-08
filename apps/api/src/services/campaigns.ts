@@ -111,7 +111,7 @@ export async function createCampaign(
       createdAt: now,
       updatedAt: now,
     };
-    await tx.insert(campaigns).values(row).run();
+    await tx.insert(campaigns).values(row);
     await ensureCampaignActionPolicies(
       tx,
       workspaceId,
@@ -133,8 +133,7 @@ export async function listCampaigns(db: DbExecutor, workspaceId: string): Promis
     .select()
     .from(campaigns)
     .where(eq(campaigns.workspaceId, workspaceId))
-    .orderBy(desc(campaigns.createdAt))
-    .all())
+    .orderBy(desc(campaigns.createdAt)))
     .map(rowToCampaign)
     .sort((a, b) => (a.status === b.status ? 0 : a.status === "active" ? -1 : 1));
 }
@@ -144,11 +143,10 @@ export async function getCampaign(
   workspaceId: string,
   campaignId: string,
 ): Promise<Campaign | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(campaigns)
-    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaignId)))
-    .get();
+    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaignId))))[0];
   return row ? rowToCampaign(row) : undefined;
 }
 
@@ -186,8 +184,7 @@ export async function updateCampaign(
 
     await tx.update(campaigns)
       .set({ ...inputToColumns(input), updatedAt: Date.now() })
-      .where(eq(campaigns.id, campaignId))
-      .run();
+      .where(eq(campaigns.id, campaignId));
     if (shouldInvalidate) {
       await invalidateMatching(tx, workspaceId, {
         directItemIds,
@@ -224,9 +221,8 @@ export async function deleteCampaign(
           eq(externalActionPolicyRules.scope, "campaign"),
           eq(externalActionPolicyRules.scopeId, campaignId),
         ),
-      )
-      .run();
-    await tx.delete(campaigns).where(eq(campaigns.id, campaignId)).run();
+      );
+    await tx.delete(campaigns).where(eq(campaigns.id, campaignId));
     return true;
   });
 }
@@ -246,8 +242,7 @@ export async function setCampaignAutomation(
       autoDailyCap: input.autoDailyCap,
       updatedAt: Date.now(),
     })
-    .where(eq(campaigns.id, campaignId))
-    .run();
+    .where(eq(campaigns.id, campaignId));
   return await getCampaign(db, workspaceId, campaignId);
 }
 
@@ -361,8 +356,7 @@ export async function getCampaignDetail(db: Db, campaign: Campaign): Promise<Cam
     })
     .from(drafts)
     .where(and(eq(drafts.workspaceId, campaign.workspaceId), eq(drafts.campaignId, campaign.id)))
-    .orderBy(desc(drafts.createdAt))
-    .all();
+    .orderBy(desc(drafts.createdAt));
 
   const draftCounts = {
     draft: 0,

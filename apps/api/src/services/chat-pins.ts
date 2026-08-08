@@ -55,8 +55,7 @@ export async function listChatPins(db: Db, sessionId: string): Promise<ChatPin[]
     .select()
     .from(chatPins)
     .where(eq(chatPins.sessionId, sessionId))
-    .orderBy(asc(chatPins.createdAt))
-    .all())
+    .orderBy(asc(chatPins.createdAt)))
     .map(rowToChatPin);
 }
 
@@ -118,14 +117,12 @@ async function writeThroughScope(db: Db, sessionId: string, kind: ChatPinKind, r
   if (kind === "campaign") {
     await db.update(chatSessions)
       .set({ campaignId: refId, updatedAt: Date.now() })
-      .where(eq(chatSessions.id, sessionId))
-      .run();
+      .where(eq(chatSessions.id, sessionId));
   }
   if (kind === "persona") {
     await db.update(chatSessions)
       .set({ personaId: refId, updatedAt: Date.now() })
-      .where(eq(chatSessions.id, sessionId))
-      .run();
+      .where(eq(chatSessions.id, sessionId));
   }
 }
 
@@ -160,7 +157,7 @@ export async function createChatPin(
     label: (input.label?.trim() || resolved).slice(0, 200),
     createdAt: Date.now(),
   };
-  await db.insert(chatPins).values(row).run();
+  await db.insert(chatPins).values(row);
   await writeThroughScope(db, sessionId, input.kind, input.refId);
   return { ok: true, pin: rowToChatPin(row) };
 }
@@ -171,13 +168,12 @@ export async function deleteChatPin(
   sessionId: string,
   pinId: string,
 ): Promise<boolean> {
-  const row = await db
+  const row = (await db
     .select()
     .from(chatPins)
-    .where(and(eq(chatPins.workspaceId, workspaceId), eq(chatPins.id, pinId)))
-    .get();
+    .where(and(eq(chatPins.workspaceId, workspaceId), eq(chatPins.id, pinId))))[0];
   if (!row || row.sessionId !== sessionId) return false;
-  await db.delete(chatPins).where(eq(chatPins.id, pinId)).run();
+  await db.delete(chatPins).where(eq(chatPins.id, pinId));
   await writeThroughScope(db, sessionId, row.kind as ChatPinKind, null);
   return true;
 }

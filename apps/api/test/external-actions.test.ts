@@ -142,12 +142,11 @@ describe("external action lifecycle", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     workspaceId = randomUUID();
     const now = Date.now();
     await db.insert(workspaces)
-      .values({ id: workspaceId, name: "Action Lab", createdAt: now, updatedAt: now })
-      .run();
+      .values({ id: workspaceId, name: "Action Lab", createdAt: now, updatedAt: now });
     await ensureWorkspaceActionPolicies(db, workspaceId);
   });
 
@@ -237,12 +236,11 @@ describe("external action lifecycle", () => {
         name: "Founder",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     const input = command(workspaceId);
     const fake = fakeAdapter(input);
     const capture = vi.fn(async () => {
-      expect(await db.select().from(externalActionDecisions).all()).toHaveLength(1);
+      expect(await db.select().from(externalActionDecisions)).toHaveLength(1);
     });
     const analytics: AnalyticsSink = { capture };
     const runtime = createExternalActionRuntime({
@@ -503,7 +501,7 @@ describe("external action lifecycle", () => {
         actor: { userId: ACTOR.userId, label: ACTOR.label },
       });
       expect(
-        (await db.select().from(externalActionDecisions).all()).map((d) => d.actorHuman),
+        (await db.select().from(externalActionDecisions)).map((d) => d.actorHuman),
       ).toEqual([true]);
       // The founder's own words survive…
       expect(decisions[0]?.reason).toContain("Changed my mind");

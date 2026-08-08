@@ -458,7 +458,7 @@ describe("connected discovery (Sprint 46)", () => {
   let feedXml: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     proxyHandler = () => undefined;
     fetchedUrls = [];
     feedXml = EMPTY_RSS;
@@ -503,8 +503,7 @@ describe("connected discovery (Sprint 46)", () => {
         contentProfileJson: "{}",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -518,8 +517,7 @@ describe("connected discovery (Sprint 46)", () => {
         externalAccountId: "ig-direct-42",
         externalAccountHandle: handle,
       })
-      .where(eq(connections.id, id))
-      .run();
+      .where(eq(connections.id, id));
     return id;
   }
 
@@ -568,11 +566,11 @@ describe("connected discovery (Sprint 46)", () => {
   }
 
   async function sourceRow(sourceId: string) {
-    return (await db.select().from(discoverySources).where(eq(discoverySources.id, sourceId)).get())!;
+    return ((await db.select().from(discoverySources).where(eq(discoverySources.id, sourceId)))[0])!;
   }
 
   async function jobsFor(sourceId: string) {
-    return await db.select().from(discoveryJobs).where(eq(discoveryJobs.sourceId, sourceId)).all();
+    return await db.select().from(discoveryJobs).where(eq(discoveryJobs.sourceId, sourceId));
   }
 
   // -------------------------------------------------------------------------
@@ -748,8 +746,7 @@ describe("connected discovery (Sprint 46)", () => {
             baseUrl: "http://169.254.169.254/latest/meta-data",
           }),
         })
-        .where(eq(discoverySources.id, source.id))
-        .run();
+        .where(eq(discoverySources.id, source.id));
       expect(source).toMatchObject({ type: "x", status: "active", connectionId });
       // keyless x sources still park as needs_api_key
       const keyless = await createSource({ type: "x", config: { query: "agentic gtm" } });
@@ -1079,11 +1076,10 @@ describe("connected discovery (Sprint 46)", () => {
       expect(item!.externalId).toBe("x:42");
       expect(item!.url).toBe("https://x.com/rivalco/status/42");
       expect(
-        await db
+        (await db
           .select()
           .from(trackedSocialAccounts)
-          .where(eq(trackedSocialAccounts.id, tracked.id))
-          .get(),
+          .where(eq(trackedSocialAccounts.id, tracked.id)))[0],
       ).toMatchObject({
         externalId: "u9",
         lastResolvedAt: expect.any(Number),
@@ -1117,8 +1113,7 @@ describe("connected discovery (Sprint 46)", () => {
       // a second consecutive rate limit doubles the wait
       await db.update(discoverySources)
         .set({ backoffUntil: null })
-        .where(eq(discoverySources.id, source.id))
-        .run();
+        .where(eq(discoverySources.id, source.id));
       const secondBefore = Date.now();
       await runDiscoveryRoute();
       expect((await sourceRow(source.id)).backoffUntil).toBeGreaterThanOrEqual(
@@ -1274,11 +1269,10 @@ describe("connected discovery (Sprint 46)", () => {
       expect(proxyCalls[0]!.headers?.["LinkedIn-Version"]).toBe("202607");
       expect(proxyCalls[1]!.headers?.["LinkedIn-Version"]).toBe("202607");
       expect(
-        await db
+        (await db
           .select()
           .from(trackedSocialAccounts)
-          .where(eq(trackedSocialAccounts.id, tracked.id))
-          .get(),
+          .where(eq(trackedSocialAccounts.id, tracked.id)))[0],
       ).toMatchObject({
         externalId: "urn:li:organization:73",
         lastResolvedAt: expect.any(Number),
@@ -1455,8 +1449,7 @@ describe("connected discovery (Sprint 46)", () => {
       });
       await db.update(connections)
         .set({ status: "disconnected" })
-        .where(eq(connections.id, connectionId))
-        .run();
+        .where(eq(connections.id, connectionId));
 
       const run = await runDiscoveryRoute();
       expect(run.sources[0]!.error).toBe("connection_disconnected");
@@ -1512,8 +1505,7 @@ describe("connected discovery (Sprint 46)", () => {
       const [item] = await listItems("new");
       await db.update(discoveredItems)
         .set({ matchingState: "ready", matchingError: null })
-        .where(eq(discoveredItems.id, item!.id as string))
-        .run();
+        .where(eq(discoveredItems.id, item!.id as string));
       const accepted = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/discovery/items/${item!.id}/accept`,

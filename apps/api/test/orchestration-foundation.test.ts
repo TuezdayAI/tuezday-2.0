@@ -33,7 +33,7 @@ describe("orchestration foundation persistence", () => {
   let personaId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Control Plane" } })
@@ -83,8 +83,7 @@ describe("orchestration foundation persistence", () => {
         createdBy: null,
         createdAt: now,
         activatedAt: now,
-      })
-      .run();
+      });
     await db.insert(campaignLanes)
       .values({
         id: laneId,
@@ -95,8 +94,7 @@ describe("orchestration foundation persistence", () => {
         status: "active",
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     await db.insert(campaignLaneRevisions)
       .values({
         id: randomUUID(),
@@ -120,8 +118,7 @@ describe("orchestration foundation persistence", () => {
         reactiveCap: null,
         status: "active",
         createdAt: now,
-      })
-      .run();
+      });
 
     await db.insert(campaignPlanRevisions)
       .values({
@@ -142,8 +139,7 @@ describe("orchestration foundation persistence", () => {
         createdBy: null,
         createdAt: now + 1,
         activatedAt: now + 1,
-      })
-      .run();
+      });
     await db.insert(campaignLaneRevisions)
       .values({
         id: randomUUID(),
@@ -167,16 +163,14 @@ describe("orchestration foundation persistence", () => {
         reactiveCap: 2,
         status: "active",
         createdAt: now + 1,
-      })
-      .run();
+      });
     await db.update(campaigns)
       .set({ currentPlanRevisionId: secondPlanId })
-      .where(eq(campaigns.id, campaignId))
-      .run();
+      .where(eq(campaigns.id, campaignId));
 
-    const plans = await db.select().from(campaignPlanRevisions).all();
-    const laneRevisions = await db.select().from(campaignLaneRevisions).all();
-    const campaign = await db.select().from(campaigns).get();
+    const plans = await db.select().from(campaignPlanRevisions);
+    const laneRevisions = await db.select().from(campaignLaneRevisions);
+    const campaign = (await db.select().from(campaigns))[0];
 
     expect(plans.map((plan) => plan.revision)).toEqual([1, 2]);
     expect(laneRevisions).toHaveLength(2);
@@ -250,7 +244,7 @@ describe("orchestration foundation persistence", () => {
       expect(second.revision).toBe(2);
       expect(activatedSecond.plan.status).toBe("active");
       expect(
-        (await db.select().from(campaignPlanRevisions).all()).find((plan) => plan.id === first.id)?.status,
+        (await db.select().from(campaignPlanRevisions)).find((plan) => plan.id === first.id)?.status,
       ).toBe("superseded");
       expect((await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan.id).toBe(second.id);
     });
@@ -323,8 +317,7 @@ describe("orchestration foundation persistence", () => {
           contentProfileJson: "{}",
           createdAt: now,
           updatedAt: now,
-        })
-        .run();
+        });
       await db.insert(postingCadences)
         .values({
           id: randomUUID(),
@@ -341,8 +334,7 @@ describe("orchestration foundation persistence", () => {
           status: "active",
           createdAt: now,
           updatedAt: now,
-        })
-        .run();
+        });
 
       const first = await backfillCampaignControlPlane(db, workspaceId, campaignId);
       const second = await backfillCampaignControlPlane(db, workspaceId, campaignId);
@@ -575,7 +567,7 @@ describe("orchestration foundation persistence", () => {
           lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", status: "active" }],
         },
       ]);
-      expect(await db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
+      expect((await db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)))[0])
         .toMatchObject({
           key: "founder-linkedin",
           name: "Founder LinkedIn",
@@ -596,7 +588,7 @@ describe("orchestration foundation persistence", () => {
         plan: { id: firstRevision.id, status: "superseded" },
         lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", status: "active" }],
       });
-      expect(await db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
+      expect((await db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)))[0])
         .toMatchObject({ key: "founder-proof", name: "Founder Proof", status: "retired" });
     });
 
@@ -615,8 +607,7 @@ describe("orchestration foundation persistence", () => {
           contentProfileJson: "{}",
           createdAt: now,
           updatedAt: now,
-        })
-        .run();
+        });
       const revision = (
         await app.inject({
           method: "POST",

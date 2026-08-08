@@ -29,8 +29,8 @@ const SOCIAL_PROVIDER_KEYS = CONNECTOR_PROVIDERS.filter((p) => p.categories?.inc
 // (or the learning loop acting on human decisions) has touched the brain.
 const AUTODRAFT_ACTOR_LABEL = "system:onboarding";
 
-function count(db: Db, query: { get(): { count: number } | undefined }): number {
-  return query.get()?.count ?? 0;
+async function count(query: PromiseLike<{ count: number }[]>): Promise<number> {
+  return (await query)[0]?.count ?? 0;
 }
 
 /**
@@ -38,9 +38,11 @@ function count(db: Db, query: { get(): { count: number } | undefined }): number 
  * priority function itself lives in @tuezday/contracts (nextActionFor) so the
  * guide dot, smart landing, and Home checklist all consume one answer.
  */
-export function getNextActionState(db: Db, workspaceId: string): NextActionState {
-  const draftCount = count(
-    db,
+export async function getNextActionState(
+  db: Db,
+  workspaceId: string,
+): Promise<NextActionState> {
+  const draftCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(drafts)
@@ -52,8 +54,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
   // reading of "approved post blocked by a missing channel connection".
   // (Approved drafts that were never scheduled are not blocked — they are
   // simply not queued yet.)
-  const blockedPublishCount = count(
-    db,
+  const blockedPublishCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(publications)
@@ -69,8 +70,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
 
   // Active campaigns with no content attached: neither a draft nor a
   // generation references the campaign.
-  const liveCampaignsWithoutContent = count(
-    db,
+  const liveCampaignsWithoutContent = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(campaigns)
@@ -94,8 +94,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
   // initial. Workspace creation seeds empty docs with NO version rows and the
   // onboarding autodraft writes the first versions as "system:onboarding", so
   // any version attributed to anyone else is a genuine review/edit.
-  const reviewedVersionCount = count(
-    db,
+  const reviewedVersionCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(brainDocumentVersions)
@@ -108,8 +107,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
       ),
   );
 
-  const socialConnectionCount = count(
-    db,
+  const socialConnectionCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(connections)
@@ -122,8 +120,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
       ),
   );
 
-  const campaignCount = count(
-    db,
+  const campaignCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(campaigns)
@@ -132,8 +129,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
 
   // "Ever approved" reads the immutable decision log, not current draft
   // state, so a draft that later moved on still counts.
-  const approvalCount = count(
-    db,
+  const approvalCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(approvalDecisions)
@@ -145,8 +141,7 @@ export function getNextActionState(db: Db, workspaceId: string): NextActionState
       ),
   );
 
-  const memberCount = count(
-    db,
+  const memberCount = await count(
     db
       .select({ count: sql<number>`count(*)` })
       .from(workspaceMembers)
@@ -180,7 +175,10 @@ export interface NextActionView {
 }
 
 /** The one shared answer (§5.1): state + derived action + checklist progress. */
-export function getNextActionView(db: Db, workspaceId: string): NextActionView {
-  const state = getNextActionState(db, workspaceId);
+export async function getNextActionView(
+  db: Db,
+  workspaceId: string,
+): Promise<NextActionView> {
+  const state = await getNextActionState(db, workspaceId);
   return { state, nextAction: nextActionFor(state), checklist: checklistProgress(state) };
 }

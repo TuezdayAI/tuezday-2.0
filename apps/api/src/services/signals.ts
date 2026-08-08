@@ -78,7 +78,7 @@ export async function insertSignalRow(
     suggestedCampaignId: null,
     createdAt: Date.now(),
   };
-  await db.insert(signals).values(row).run();
+  await db.insert(signals).values(row);
   return row;
 }
 
@@ -124,11 +124,10 @@ export async function readSignal(
   workspaceId: string,
   signalId: string,
 ): Promise<Signal | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(signals)
-    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
-    .get();
+    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId))))[0];
   return row ? rowToSignal(row, await listSignalMatches(db, workspaceId, row.id)) : undefined;
 }
 
@@ -213,8 +212,7 @@ export async function listSignals(db: Db, workspaceId: string): Promise<SignalWi
     .select()
     .from(signals)
     .where(eq(signals.workspaceId, workspaceId))
-    .orderBy(desc(signals.createdAt))
-    .all();
+    .orderBy(desc(signals.createdAt));
   if (signalRows.length === 0) return [];
 
   const draftRows = await db
@@ -231,8 +229,7 @@ export async function listSignals(db: Db, workspaceId: string): Promise<SignalWi
         drafts.sourceSignalId,
         signalRows.map((s) => s.id),
       ),
-    )
-    .all();
+    );
 
   const matchesBySignal = await listSignalMatchesForSignals(
     db,

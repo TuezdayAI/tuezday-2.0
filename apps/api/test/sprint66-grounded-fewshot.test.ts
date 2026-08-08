@@ -42,7 +42,7 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: countingGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Sprint66" } })
@@ -196,11 +196,10 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
 
   describe("legacy signal→draft path traces the examples section", () => {
     async function sectionsOf(generationId: string): Promise<ContextSection[]> {
-      const row = (await db
+      const row = ((await db
         .select({ sectionsJson: generations.sectionsJson })
         .from(generations)
-        .where(eq(generations.id, generationId))
-        .get())!;
+        .where(eq(generations.id, generationId)))[0])!;
       return JSON.parse(row.sectionsJson) as ContextSection[];
     }
 
@@ -299,11 +298,10 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
       expect(critiqueMessage).not.toContain("Prior examples from approval history");
 
       const sections = JSON.parse(
-        (await db
+        ((await db
           .select({ sectionsJson: generations.sectionsJson })
           .from(generations)
-          .where(eq(generations.id, outcome.run.generationId!))
-          .get())!.sectionsJson,
+          .where(eq(generations.id, outcome.run.generationId!)))[0])!.sectionsJson,
       ) as ContextSection[];
       const provenance = sections.find((s) => s.key === "examples")!;
       expect(provenance.layer).toBe("examples");

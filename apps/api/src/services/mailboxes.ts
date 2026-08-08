@@ -72,7 +72,7 @@ export async function mailboxDailySendCount(
   nowMs: number = Date.now(),
 ): Promise<number> {
   return Number(
-    (await db
+    ((await db
       .select({ count: sql<number>`count(*)` })
       .from(emailDeliveries)
       .where(
@@ -83,8 +83,7 @@ export async function mailboxDailySendCount(
           inArray(emailDeliveries.status, ["accepted", "delivered"]),
           gte(emailDeliveries.acceptedAt, utcDayStart(nowMs)),
         ),
-      )
-      .get())?.count ?? 0,
+      ))[0])?.count ?? 0,
   );
 }
 
@@ -100,11 +99,10 @@ export async function getMailboxRow(
   workspaceId: string,
   mailboxId: string,
 ): Promise<MailboxRow | undefined> {
-  return await db
+  return (await db
     .select()
     .from(mailboxes)
-    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)))
-    .get();
+    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId))))[0];
 }
 
 export async function getMailbox(db: Db, workspaceId: string, mailboxId: string): Promise<Mailbox | undefined> {
@@ -117,8 +115,7 @@ export async function listMailboxes(db: Db, workspaceId: string): Promise<Mailbo
       .select()
       .from(mailboxes)
       .where(eq(mailboxes.workspaceId, workspaceId))
-      .orderBy(mailboxes.createdAt)
-      .all())
+      .orderBy(mailboxes.createdAt))
       .map(async (row) => await withUsage(db, rowToMailbox(row))));
 }
 
@@ -128,8 +125,7 @@ export async function listConnectedMailboxes(db: Db, workspaceId: string): Promi
     .select()
     .from(mailboxes)
     .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.status, "connected")))
-    .orderBy(mailboxes.createdAt)
-    .all())
+    .orderBy(mailboxes.createdAt))
     .map(rowToMailbox);
 }
 
@@ -176,11 +172,10 @@ export async function createMailbox(
   }
 
   const now = Date.now();
-  const existing = await db
+  const existing = (await db
     .select()
     .from(mailboxes)
-    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.address, address)))
-    .get();
+    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.address, address))))[0];
   if (existing) {
     await db.update(mailboxes)
       .set({
@@ -189,8 +184,7 @@ export async function createMailbox(
         lastError: null,
         updatedAt: now,
       })
-      .where(eq(mailboxes.id, existing.id))
-      .run();
+      .where(eq(mailboxes.id, existing.id));
     return await withUsage(db, (await getMailbox(db, workspaceId, existing.id))!);
   }
 
@@ -213,8 +207,7 @@ export async function createMailbox(
       lastError: null,
       createdAt: now,
       updatedAt: now,
-    })
-    .run();
+    });
   return await withUsage(db, (await getMailbox(db, workspaceId, id))!);
 }
 
@@ -238,8 +231,7 @@ export async function updateMailbox(
       ...(input.defaultPersonaId !== undefined ? { defaultPersonaId: input.defaultPersonaId } : {}),
       updatedAt: Date.now(),
     })
-    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)))
-    .run();
+    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)));
   return await withUsage(db, (await getMailbox(db, workspaceId, mailboxId))!);
 }
 
@@ -249,7 +241,6 @@ export async function deleteMailbox(db: Db, workspaceId: string, mailboxId: stri
   if (!existing) return false;
   await db.update(mailboxes)
     .set({ status: "disconnected", updatedAt: Date.now() })
-    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)))
-    .run();
+    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)));
   return true;
 }

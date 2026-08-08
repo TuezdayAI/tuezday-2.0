@@ -21,7 +21,7 @@ describe("teams API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildApp({ db, llm: fakeGateway, workerToken: "worker-secret" });
     owner = await registerUser(app, "owner@test.dev", "Olive Owner");
     ownerApp = asUser(app, owner.token);
@@ -200,8 +200,7 @@ describe("teams API", () => {
       const inv = await invite("late@test.dev");
       await db.update(workspaceInvites)
         .set({ expiresAt: Date.now() - 1000 })
-        .where(eq(workspaceInvites.id, inv.id))
-        .run();
+        .where(eq(workspaceInvites.id, inv.id));
       const late = await registerUser(app, "late@test.dev", "Late");
       const res = await asUser(app, late.token).inject({
         method: "POST",
@@ -269,8 +268,7 @@ describe("teams API", () => {
       const legacyId = randomUUID();
       const now = Date.now();
       await db.insert(workspaces)
-        .values({ id: legacyId, name: "Pre-auth Space", createdAt: now, updatedAt: now })
-        .run();
+        .values({ id: legacyId, name: "Pre-auth Space", createdAt: now, updatedAt: now });
 
       const list = (await ownerApp.inject({ method: "GET", url: "/workspaces" })).json();
       expect(list.map((w: { id: string }) => w.id)).toContain(legacyId);
@@ -280,8 +278,7 @@ describe("teams API", () => {
       const legacyId = randomUUID();
       const now = Date.now();
       await db.insert(workspaces)
-        .values({ id: legacyId, name: "Pre-auth Space", createdAt: now, updatedAt: now })
-        .run();
+        .values({ id: legacyId, name: "Pre-auth Space", createdAt: now, updatedAt: now });
 
       const res = await ownerApp.inject({ method: "GET", url: `/workspaces/${legacyId}` });
       expect(res.statusCode).toBe(200);

@@ -206,8 +206,7 @@ export async function parsePreferencesSection(
       confidence: preferenceRules.confidence,
     })
     .from(preferenceRules)
-    .where(eq(preferenceRules.workspaceId, workspaceId))
-    .all();
+    .where(eq(preferenceRules.workspaceId, workspaceId));
   const byNormalized = new Map(live.map((row) => [normalizeRule(row.rule), row]));
 
   const rules: TracePreference[] = [];
@@ -238,11 +237,10 @@ async function planFor(
   artifactText: string,
 ): Promise<TracePlan | null> {
   if (!campaignId) return null;
-  const campaign = await db
+  const campaign = (await db
     .select({ name: campaigns.name })
     .from(campaigns)
-    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaignId)))
-    .get();
+    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaignId))))[0];
   if (!campaign) return null;
   const plan = (await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan;
   const pillars: string[] = plan?.pillars ?? [];
@@ -283,11 +281,10 @@ async function originForDraft(
       at: null,
     };
   }
-  const signal = await db
+  const signal = (await db
     .select({ content: signals.content, source: signals.source, createdAt: signals.createdAt })
     .from(signals)
-    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
-    .get();
+    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId))))[0];
   if (!signal) {
     return {
       kind: "signal",
@@ -321,20 +318,18 @@ interface RunFacts {
  * zero — see `costFromGeneration`.
  */
 async function runFactsForDraft(db: Db, workspaceId: string, draftId: string): Promise<RunFacts> {
-  const run = await db
+  const run = (await db
     .select()
     .from(pipelineRuns)
     .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.draftId, draftId)))
-    .orderBy(desc(pipelineRuns.createdAt))
-    .get();
+    .orderBy(desc(pipelineRuns.createdAt)))[0];
   if (!run) return { runId: null, critic: null, cost: null };
 
   const critiqueSteps = (await db
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, run.id))
-    .orderBy(pipelineRunSteps.createdAt)
-    .all())
+    .orderBy(pipelineRunSteps.createdAt))
     .filter((step) => step.stepKey.includes("critique") && step.outputJson);
 
   let critic: TraceCritic | null = null;
@@ -353,11 +348,10 @@ async function runFactsForDraft(db: Db, workspaceId: string, draftId: string): P
     }
   }
 
-  const model = await db
+  const model = (await db
     .select({ model: generations.model, provider: generations.provider })
     .from(generations)
-    .where(eq(generations.id, run.generationId ?? ""))
-    .get();
+    .where(eq(generations.id, run.generationId ?? "")))[0];
 
   return {
     runId: run.id,
@@ -409,8 +403,7 @@ async function revisionsFor(db: Db, workspaceId: string, draftId: string): Promi
       and(eq(draftRevisionTurns.workspaceId, workspaceId), eq(draftRevisionTurns.draftId, draftId)),
     )
     .orderBy(draftRevisionTurns.createdAt)
-    .limit(REVISION_LIMIT)
-    .all())
+    .limit(REVISION_LIMIT))
     .map((turn) => ({
       id: turn.id,
       instruction: turn.instruction,
@@ -499,21 +492,20 @@ async function draftTrace(
   subjectOverride: ArtifactTrace["subject"] | null,
   now: number,
 ): Promise<ArtifactTrace | undefined> {
-  const draft = await db
+  const draft = (await db
     .select()
     .from(drafts)
-    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
-    .get();
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))))[0];
   if (!draft) return undefined;
 
   const generation = draft.sourceGenerationId
-    ? await db.select().from(generations).where(eq(generations.id, draft.sourceGenerationId)).get()
+    ? (await db.select().from(generations).where(eq(generations.id, draft.sourceGenerationId)))[0]
     : undefined;
 
   // The latest completed revision replaced the context the model saw, so it —
   // not the original generation — is the honest answer to "why did it write
   // this?" for the words currently on screen.
-  const latestTurn = await db
+  const latestTurn = (await db
     .select()
     .from(draftRevisionTurns)
     .where(
@@ -523,8 +515,7 @@ async function draftTrace(
         eq(draftRevisionTurns.status, "completed"),
       ),
     )
-    .orderBy(desc(draftRevisionTurns.createdAt))
-    .get();
+    .orderBy(desc(draftRevisionTurns.createdAt)))[0];
 
   const sections = latestTurn
     ? parseSections(latestTurn.sectionsJson)
@@ -583,21 +574,19 @@ async function deliverableTrace(
   deliverableId: string,
   now: number,
 ): Promise<ArtifactTrace | undefined> {
-  const deliverable = await db
+  const deliverable = (await db
     .select()
     .from(deliverables)
-    .where(and(eq(deliverables.workspaceId, workspaceId), eq(deliverables.id, deliverableId)))
-    .get();
+    .where(and(eq(deliverables.workspaceId, workspaceId), eq(deliverables.id, deliverableId))))[0];
   if (!deliverable) return undefined;
 
-  const variant = await db
+  const variant = (await db
     .select()
     .from(variants)
     .where(eq(variants.deliverableId, deliverableId))
-    .orderBy(desc(variants.variantVersion))
-    .get();
+    .orderBy(desc(variants.variantVersion)))[0];
   const snapshot = variant
-    ? await db.select().from(contextSnapshots).where(eq(contextSnapshots.id, variant.contextSnapshotId)).get()
+    ? (await db.select().from(contextSnapshots).where(eq(contextSnapshots.id, variant.contextSnapshotId)))[0]
     : undefined;
 
   let sections: ContextSection[] = [];
@@ -611,11 +600,10 @@ async function deliverableTrace(
   }
 
   const pkg = deliverable.packageId
-    ? await db
+    ? (await db
         .select({ angle: contentPackages.angle, createdAt: contentPackages.createdAt })
         .from(contentPackages)
-        .where(eq(contentPackages.id, deliverable.packageId))
-        .get()
+        .where(eq(contentPackages.id, deliverable.packageId)))[0]
     : undefined;
 
   const origin: TraceOrigin = pkg
@@ -694,11 +682,10 @@ async function publicationTrace(
   publicationId: string,
   now: number,
 ): Promise<ArtifactTrace | undefined> {
-  const publication = await db
+  const publication = (await db
     .select()
     .from(publications)
-    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
-    .get();
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId))))[0];
   if (!publication) return undefined;
   return await draftTrace(db, workspaceId, publication.draftId, {
     kind: "publication",
@@ -716,11 +703,10 @@ async function externalActionTrace(
   actionId: string,
   now: number,
 ): Promise<ArtifactTrace | undefined> {
-  const action = await db
+  const action = (await db
     .select()
     .from(externalActions)
-    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)))
-    .get();
+    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId))))[0];
   if (!action) return undefined;
 
   const subject: ArtifactTrace["subject"] = {

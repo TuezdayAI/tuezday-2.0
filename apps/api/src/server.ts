@@ -7,7 +7,7 @@ import { DbEvidenceStore } from "./evidence/db-store";
 import { createLlmGatewayFromEnv } from "./llm";
 import { backfillCollections } from "./services/evidence";
 import { parseDiscoveryOperatorPolicy } from "./runtime/operator-policy";
-import { resolveDbFile } from "./runtime/db-file";
+import { resolveDatabaseUrl } from "./runtime/database-url";
 import { resolveHost } from "./runtime/host";
 import { resolvePort } from "./runtime/port";
 import { createShutdownHandler } from "./runtime/shutdown";
@@ -29,7 +29,7 @@ if (fs.existsSync(envFile)) {
   }
 }
 
-const DB_FILE = resolveDbFile(process.env);
+const DATABASE_URL = resolveDatabaseUrl(process.env);
 const PORT = resolvePort(process.env);
 const HOST = resolveHost(process.env);
 let operatorPolicy;
@@ -57,7 +57,7 @@ if (productionEnvErrors.length > 0) {
   process.exit(1);
 }
 
-const db = createDb(DB_FILE);
+const db = await createDb(DATABASE_URL);
 // One gateway instance shared by generation and the evidence store's
 // embeddings (Sprint 47: evidence is native — no external service).
 const llm = createLlmGatewayFromEnv();

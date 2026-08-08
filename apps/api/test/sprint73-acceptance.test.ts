@@ -32,7 +32,7 @@ describe("Sprint 73 durable queue acceptance", () => {
   });
 
   it("survives retries, dead letters, requeue, reclaim, and app restart fairly", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seedWorkspace(db, FIRST, "First");
     await seedWorkspace(db, SECOND, "Second");
     const attempts = new Map<string, number>();
@@ -60,8 +60,7 @@ describe("Sprint 73 durable queue acceptance", () => {
     };
     await reconcileBackgroundSchedules(db, policy);
     await db.update(backgroundSchedules)
-      .set({ nextRunAt: Date.now() + 86_400_000 })
-      .run();
+      .set({ nextRunAt: Date.now() + 86_400_000 });
     await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: FIRST },
       idempotencyKey: "acceptance:first",
@@ -89,18 +88,16 @@ describe("Sprint 73 durable queue acceptance", () => {
 
     await db.update(backgroundJobs)
       .set({ availableAt: 0 })
-      .where(eq(backgroundJobs.status, "queued"))
-      .run();
+      .where(eq(backgroundJobs.status, "queued"));
     expect(await tick(app)).toMatchObject({
       claimed: 2,
       succeeded: 1,
       deadLettered: 1,
     });
-    const dead = (await db
+    const dead = ((await db
       .select()
       .from(backgroundJobs)
-      .where(eq(backgroundJobs.status, "dead_letter"))
-      .get())!;
+      .where(eq(backgroundJobs.status, "dead_letter")))[0])!;
 
     secondRecovers = true;
     const requeued = await app.inject({
@@ -126,16 +123,15 @@ describe("Sprint 73 durable queue acceptance", () => {
     expect(staleClaim?.id).toBe(reclaim.id);
     await db.update(backgroundJobs)
       .set({ leaseExpiresAt: 0 })
-      .where(eq(backgroundJobs.id, reclaim.id))
-      .run();
+      .where(eq(backgroundJobs.id, reclaim.id));
     expect(await tick(app)).toMatchObject({ claimed: 1, succeeded: 1 });
     expect(
-      await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, reclaim.id)).get(),
+      (await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, reclaim.id)))[0],
     ).toMatchObject({ status: "succeeded", attempt: 2 });
 
     await app.close();
     app = undefined;
-    const scheduleCount = (await db.select().from(backgroundSchedules).all()).length;
+    const scheduleCount = (await db.select().from(backgroundSchedules)).length;
     app = await buildApp({
       db,
       workerToken: TOKEN,
@@ -143,7 +139,7 @@ describe("Sprint 73 durable queue acceptance", () => {
       backgroundJobPolicy: policy,
     });
     expect(await tick(app)).toMatchObject({ reconciled: 0, admitted: 0 });
-    expect(await db.select().from(backgroundSchedules).all()).toHaveLength(scheduleCount);
+    expect(await db.select().from(backgroundSchedules)).toHaveLength(scheduleCount);
 
     const stats = await app.inject({
       method: "GET",
@@ -157,8 +153,7 @@ describe("Sprint 73 durable queue acceptance", () => {
 
 async function seedWorkspace(db: Db, id: string, name: string): Promise<void> {
   await db.insert(workspaces)
-    .values({ id, name, createdAt: Date.now(), updatedAt: Date.now() })
-    .run();
+    .values({ id, name, createdAt: Date.now(), updatedAt: Date.now() });
 }
 
 function workerHeaders() {

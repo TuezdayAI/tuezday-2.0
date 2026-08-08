@@ -171,7 +171,7 @@ export async function insertExternalAction(db: Db, input: NewExternalActionRecor
     dispatchedAt: null,
     completedAt: null,
   };
-  await db.insert(externalActions).values(row).run();
+  await db.insert(externalActions).values(row);
   return rowToExternalAction(row);
 }
 
@@ -180,11 +180,10 @@ export async function getExternalAction(
   workspaceId: string,
   actionId: string,
 ): Promise<ExternalAction | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(externalActions)
-    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)))
-    .get();
+    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId))))[0];
   return row ? rowToExternalAction(row) : undefined;
 }
 
@@ -197,8 +196,7 @@ export async function listExternalActions(
     .select()
     .from(externalActions)
     .where(eq(externalActions.workspaceId, workspaceId))
-    .orderBy(desc(externalActions.createdAt))
-    .all())
+    .orderBy(desc(externalActions.createdAt)))
     .map(rowToExternalAction)
     .filter((action) => !filters.status || action.status === filters.status)
     .filter((action) => !filters.kind || action.kind === filters.kind)
@@ -208,11 +206,10 @@ export async function listExternalActions(
 }
 
 export async function getExternalActionPayload(db: Db, actionId: string): Promise<unknown> {
-  const row = await db
+  const row = (await db
     .select({ payloadJson: externalActions.payloadJson })
     .from(externalActions)
-    .where(eq(externalActions.id, actionId))
-    .get();
+    .where(eq(externalActions.id, actionId)))[0];
   return row ? JSON.parse(row.payloadJson) : undefined;
 }
 
@@ -221,7 +218,7 @@ export async function findExternalActionByIdempotencyKey(
   workspaceId: string,
   idempotencyKey: string,
 ): Promise<ExternalAction | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(externalActions)
     .where(
@@ -229,8 +226,7 @@ export async function findExternalActionByIdempotencyKey(
         eq(externalActions.workspaceId, workspaceId),
         eq(externalActions.idempotencyKey, idempotencyKey),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToExternalAction(row) : undefined;
 }
 
@@ -250,8 +246,7 @@ export async function getExternalActionDetail(
         eq(externalActionDecisions.actionId, actionId),
       ),
     )
-    .orderBy(desc(externalActionDecisions.createdAt))
-    .all())
+    .orderBy(desc(externalActionDecisions.createdAt)))
     .map(rowToDecision);
   return { action, decisions };
 }
@@ -284,8 +279,7 @@ export async function humanRefusedActionIds(
           eq(externalActionDecisions.actorHuman, true),
           inArray(externalActionDecisions.actionId, actionIds),
         ),
-      )
-      .all())
+      ))
       .map((r) => r.actionId),
   );
 }
@@ -331,8 +325,7 @@ export async function transitionExternalAction(
       completedAt: options.completedAt === undefined ? action.completedAt : options.completedAt,
       updatedAt: now,
     })
-    .where(eq(externalActions.id, actionId))
-    .run();
+    .where(eq(externalActions.id, actionId));
   return (await getExternalAction(db, workspaceId, actionId))!;
 }
 
@@ -357,8 +350,7 @@ export async function updateExternalActionExecution(
     })
     .where(
       and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)),
-    )
-    .run();
+    );
   return (await getExternalAction(db, workspaceId, actionId))!;
 }
 
@@ -382,8 +374,7 @@ export async function insertExternalActionDecision(
       subjectFingerprint: action.fingerprint,
       policySnapshotJson: JSON.stringify(action.policy),
       createdAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 export async function linkExternalActionSuccessor(
@@ -393,8 +384,7 @@ export async function linkExternalActionSuccessor(
 ): Promise<void> {
   await db.update(externalActions)
     .set({ supersededByActionId: successorId, updatedAt: Date.now() })
-    .where(eq(externalActions.id, actionId))
-    .run();
+    .where(eq(externalActions.id, actionId));
 }
 
 /** Actions whose subject or linked draft is this draft — the editor's action
@@ -416,8 +406,7 @@ export async function listExternalActionsForDraft(
         ),
       ),
     )
-    .orderBy(desc(externalActions.createdAt))
-    .all())
+    .orderBy(desc(externalActions.createdAt)))
     .map(rowToExternalAction);
 }
 
@@ -447,8 +436,7 @@ export async function countTerminalExternalActionsForSubject(
         eq(externalActions.kind, kind),
         eq(externalActions.subjectId, subjectId),
       ),
-    )
-    .all())
+    ))
     .filter((row) => TERMINAL_EXTERNAL_ACTION_STATUSES.has(row.status as ExternalActionStatus))
     .length;
 }
@@ -458,8 +446,7 @@ export async function listRunnableExternalActions(db: Db, workspaceId: string): 
     .select()
     .from(externalActions)
     .where(eq(externalActions.workspaceId, workspaceId))
-    .orderBy(externalActions.createdAt)
-    .all())
+    .orderBy(externalActions.createdAt))
     .map(rowToExternalAction)
     .filter(
       (action) =>

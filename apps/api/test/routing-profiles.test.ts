@@ -60,7 +60,7 @@ describe("campaign routing profiles (Sprint 61)", () => {
   let personaId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: stubLlm });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Routing" } })
@@ -114,7 +114,7 @@ describe("campaign routing profiles (Sprint 61)", () => {
     expect(second.id).toBe(first.id);
     expect(second.profileFingerprint).toBe(first.profileFingerprint);
     expect(
-      await db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)).all(),
+      await db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)),
     ).toHaveLength(1);
     // The compiled projection reflects plan + active lanes + policy defaults.
     expect(first.payload.pillars).toEqual(["GTM memory"]);
@@ -135,7 +135,7 @@ describe("campaign routing profiles (Sprint 61)", () => {
     expect(second.planRevisionId).not.toBe(first.planRevisionId);
     // Both rows survive — profiles are append-only derived data.
     expect(
-      await db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)).all(),
+      await db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)),
     ).toHaveLength(2);
   });
 
@@ -151,11 +151,10 @@ describe("campaign routing profiles (Sprint 61)", () => {
     expect(profile!.routingBand).toBe("auto_package");
     expect(profile!.minFit).toBe(80);
     expect(profile!.payload.exclusions).toEqual(["crypto"]);
-    const campaign = (await db
+    const campaign = ((await db
       .select()
       .from(campaigns)
-      .where(eq(campaigns.id, campaignId))
-      .get())!;
+      .where(eq(campaigns.id, campaignId)))[0])!;
     expect(campaign.routingBand).toBe("auto_package");
     expect(campaign.routingMinFit).toBe(80);
   });

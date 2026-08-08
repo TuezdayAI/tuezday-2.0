@@ -8,8 +8,8 @@ describe("approval action tokens", () => {
   const WS = "ws-1";
   const DRAFT = "draft-1";
 
-  beforeEach(() => {
-    db = createTestDb();
+  beforeEach(async () => {
+    db = await createTestDb();
   });
 
   it("mintActionToken returns a raw token string", async () => {

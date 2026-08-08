@@ -40,8 +40,7 @@ export async function listAgentProposalsForRun(db: Db, agentRunId: string): Prom
     .select()
     .from(agentProposals)
     .where(eq(agentProposals.agentRunId, agentRunId))
-    .orderBy(desc(agentProposals.createdAt))
-    .all())
+    .orderBy(desc(agentProposals.createdAt)))
     .map(rowToAgentProposal);
 }
 
@@ -59,8 +58,7 @@ export async function countProposalsToday(db: Db, workspaceId: string, now = Dat
         eq(agentProposals.workspaceId, workspaceId),
         gte(agentProposals.createdAt, now - DAY_MS),
       ),
-    )
-    .all()).length;
+    )).length;
 }
 
 export interface RecordProposalInput {
@@ -93,6 +91,6 @@ export async function recordAgentProposal(db: Db, input: RecordProposalInput): P
     chatSessionId: input.chatSessionId ?? null,
     createdAt: Date.now(),
   };
-  await db.insert(agentProposals).values(row).run();
+  await db.insert(agentProposals).values(row);
   return rowToAgentProposal(row);
 }

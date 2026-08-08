@@ -40,7 +40,7 @@ async function fixture(
     json: {},
   }),
 ) {
-  const db = createTestDb();
+  const db = await createTestDb();
   await db.insert(workspaces)
     .values([
       {
@@ -55,8 +55,7 @@ async function fixture(
         createdAt: 1,
         updatedAt: 1,
       },
-    ])
-    .run();
+    ]);
   const calls: Array<{ path: string; baseUrl?: string }> = [];
   const fabric = {
     async proxyJson(_method, path, _connectionId, _integrationKey, opts) {
@@ -95,8 +94,7 @@ async function fixture(
         contentProfileJson: "{}",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -134,8 +132,7 @@ describe("tracked account public inputs", () => {
         lastResolvedAt: 10,
         lastError: "old-error",
       })
-      .where(eq(trackedSocialAccounts.id, created.id))
-      .run();
+      .where(eq(trackedSocialAccounts.id, created.id));
     const updated = (await updateTrackedSocialAccount(
       f.db,
       workspaceId,
@@ -316,7 +313,7 @@ describe("tracked account resolver", () => {
 
 describe("tracked account resolve route", () => {
   it("forces an authorized resolution and returns the cached row", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const calls: string[] = [];
     const fabric = {
       async health() {
@@ -370,8 +367,7 @@ describe("tracked account resolve route", () => {
         contentProfileJson: "{}",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     const account = await createTrackedSocialAccount(
       db,
       routeWorkspaceId,

@@ -382,7 +382,7 @@ describe("ads execution API (Sprint 20)", () => {
     state = execGraphState();
     received = [];
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: fakeGateway(),
       connectors: fakeFabric(state),
       fetcher: webhookFetcher(received),

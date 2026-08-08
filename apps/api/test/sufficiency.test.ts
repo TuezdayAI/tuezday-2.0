@@ -118,7 +118,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
   let planRevisionId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({
       db,
       llm: sufficiencyGateway(() => ({ sufficient: false })),
@@ -182,11 +182,10 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
         observedAt: Date.now(),
       });
     });
-    return (await db
+    return ((await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.title, title))
-      .get())!.id;
+      .where(eq(canonicalExternalStories.title, title)))[0])!.id;
   }
 
   async function seedOpportunity(
@@ -195,11 +194,10 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
     status: "qualified" | "auto_qualified" = "qualified",
   ): Promise<string> {
     const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
-    const story = (await db
+    const story = ((await db
       .select()
       .from(canonicalExternalStories)
-      .where(eq(canonicalExternalStories.id, storyId))
-      .get())!;
+      .where(eq(canonicalExternalStories.id, storyId)))[0])!;
     const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
@@ -230,8 +228,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
         expiresAt: null,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -246,11 +243,10 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
   }
 
   async function packageRow(packageId: string) {
-    return (await db
+    return ((await db
       .select()
       .from(contentPackages)
-      .where(eq(contentPackages.id, packageId))
-      .get())!;
+      .where(eq(contentPackages.id, packageId)))[0])!;
   }
 
   it("assesses a sufficient package into ready with eligibility recorded", async () => {
@@ -338,8 +334,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
       await db
         .select()
         .from(sufficiencyAssessments)
-        .where(eq(sufficiencyAssessments.packageId, packageId))
-        .all(),
+        .where(eq(sufficiencyAssessments.packageId, packageId)),
     ).toEqual([]);
     // failed is infra-terminal until an operator reassess resets the queue.
     const parked = await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
@@ -458,17 +453,15 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
     run = await runPackagePipeline(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run).toMatchObject({ packagesCreated: 1, packagesAssessed: 1, failures: 0 });
 
-    const opportunity = (await db
+    const opportunity = ((await db
       .select()
       .from(campaignOpportunities)
-      .where(eq(campaignOpportunities.id, opportunityId))
-      .get())!;
+      .where(eq(campaignOpportunities.id, opportunityId)))[0])!;
     expect(opportunity.status).toBe("package_created");
-    const pkg = (await db
+    const pkg = ((await db
       .select()
       .from(contentPackages)
-      .where(eq(contentPackages.opportunityId, opportunityId))
-      .get())!;
+      .where(eq(contentPackages.opportunityId, opportunityId)))[0])!;
     // System actor created it and the assessment already ran.
     expect(pkg.createdByUserId).toBeNull();
     expect(pkg.status).toBe("ready");
@@ -502,8 +495,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
         .select()
         .from(laneEligibilityDecisions)
         .where(eq(laneEligibilityDecisions.packageId, packageId))
-        .orderBy(asc(laneEligibilityDecisions.createdAt))
-        .all(),
+        .orderBy(asc(laneEligibilityDecisions.createdAt)),
     ).toHaveLength(1);
   });
 });

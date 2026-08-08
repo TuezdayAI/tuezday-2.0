@@ -91,7 +91,7 @@ async function insertDefinition(
     createdAt: now,
     updatedAt: now,
   };
-  await tx.insert(pipelineDefinitions).values(row).run();
+  await tx.insert(pipelineDefinitions).values(row);
   await tx.insert(pipelineDefinitionVersions)
     .values({
       id: randomUUID(),
@@ -101,8 +101,7 @@ async function insertDefinition(
       actorLabel: actor.label,
       actorUserId: actor.userId,
       createdAt: now,
-    })
-    .run();
+    });
   return row;
 }
 
@@ -112,7 +111,7 @@ async function insertDefinition(
  * ensureBrainDocs pattern.
  */
 export async function ensurePipelineDefinitions(db: Db, workspaceId: string): Promise<void> {
-  const existing = await db
+  const existing = (await db
     .select({ id: pipelineDefinitions.id })
     .from(pipelineDefinitions)
     .where(
@@ -120,8 +119,7 @@ export async function ensurePipelineDefinitions(db: Db, workspaceId: string): Pr
         eq(pipelineDefinitions.workspaceId, workspaceId),
         eq(pipelineDefinitions.taskKey, "signal_social_post"),
       ),
-    )
-    .get();
+    ))[0];
   if (existing) return;
   await db.transaction(async (tx) => {
     await insertDefinition(
@@ -147,8 +145,7 @@ export async function listPipelineDefinitions(db: Db, workspaceId: string): Prom
     .select()
     .from(pipelineDefinitions)
     .where(eq(pipelineDefinitions.workspaceId, workspaceId))
-    .orderBy(desc(pipelineDefinitions.createdAt))
-    .all())
+    .orderBy(desc(pipelineDefinitions.createdAt)))
     .map(rowToDefinition);
 }
 
@@ -157,7 +154,7 @@ export async function getPipelineDefinition(
   workspaceId: string,
   definitionId: string,
 ): Promise<PipelineDefinition | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(pipelineDefinitions)
     .where(
@@ -165,8 +162,7 @@ export async function getPipelineDefinition(
         eq(pipelineDefinitions.workspaceId, workspaceId),
         eq(pipelineDefinitions.id, definitionId),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToDefinition(row) : undefined;
 }
 
@@ -181,8 +177,7 @@ export async function getPipelineDefinitionDetail(
     .select()
     .from(pipelineDefinitionVersions)
     .where(eq(pipelineDefinitionVersions.definitionId, definitionId))
-    .orderBy(desc(pipelineDefinitionVersions.version))
-    .all())
+    .orderBy(desc(pipelineDefinitionVersions.version)))
     .map(rowToVersion);
   return { ...definition, versions };
 }
@@ -225,7 +220,7 @@ export async function updatePipelineSpec(
   actor: PipelineActor,
 ): Promise<PipelineDefinition> {
   return await db.transaction(async (tx) => {
-    const row = await tx
+    const row = (await tx
       .select()
       .from(pipelineDefinitions)
       .where(
@@ -233,8 +228,7 @@ export async function updatePipelineSpec(
           eq(pipelineDefinitions.workspaceId, workspaceId),
           eq(pipelineDefinitions.id, definitionId),
         ),
-      )
-      .get();
+      ))[0];
     if (!row) throw new PipelineDefinitionNotFoundError(definitionId);
     const now = Date.now();
     const nextVersion = row.currentVersion + 1;
@@ -247,8 +241,7 @@ export async function updatePipelineSpec(
         specJson,
         updatedAt: now,
       })
-      .where(eq(pipelineDefinitions.id, definitionId))
-      .run();
+      .where(eq(pipelineDefinitions.id, definitionId));
     await tx.insert(pipelineDefinitionVersions)
       .values({
         id: randomUUID(),
@@ -258,8 +251,7 @@ export async function updatePipelineSpec(
         actorLabel: actor.label,
         actorUserId: actor.userId,
         createdAt: now,
-      })
-      .run();
+      });
     return rowToDefinition({
       ...row,
       name: input.name ?? row.name,
@@ -283,7 +275,7 @@ export async function setPipelineStatus(
   status: PipelineDefinitionStatus,
 ): Promise<PipelineDefinition> {
   return await db.transaction(async (tx) => {
-    const row = await tx
+    const row = (await tx
       .select()
       .from(pipelineDefinitions)
       .where(
@@ -291,8 +283,7 @@ export async function setPipelineStatus(
           eq(pipelineDefinitions.workspaceId, workspaceId),
           eq(pipelineDefinitions.id, definitionId),
         ),
-      )
-      .get();
+      ))[0];
     if (!row) throw new PipelineDefinitionNotFoundError(definitionId);
     const now = Date.now();
     if (status === "active") {
@@ -305,8 +296,7 @@ export async function setPipelineStatus(
             eq(pipelineDefinitions.taskKey, row.taskKey),
             eq(pipelineDefinitions.status, "active"),
           ),
-        )
-        .all())
+        ))
         .filter(
           (candidate) =>
             candidate.id !== row.id &&
@@ -316,14 +306,12 @@ export async function setPipelineStatus(
       for (const sibling of siblings) {
         await tx.update(pipelineDefinitions)
           .set({ status: "draft", updatedAt: now })
-          .where(eq(pipelineDefinitions.id, sibling.id))
-          .run();
+          .where(eq(pipelineDefinitions.id, sibling.id));
       }
     }
     await tx.update(pipelineDefinitions)
       .set({ status, updatedAt: now })
-      .where(eq(pipelineDefinitions.id, definitionId))
-      .run();
+      .where(eq(pipelineDefinitions.id, definitionId));
     return rowToDefinition({ ...row, status, updatedAt: now });
   });
 }
@@ -350,8 +338,7 @@ export async function resolvePipelineDefinition(
         eq(pipelineDefinitions.taskKey, input.taskKey),
         eq(pipelineDefinitions.status, "active"),
       ),
-    )
-    .all();
+    );
   const byLane = input.laneId
     ? active.find((row) => row.laneId === input.laneId)
     : undefined;

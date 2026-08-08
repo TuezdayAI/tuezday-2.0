@@ -13,7 +13,7 @@ describe("the unified inbox (Sprint 70)", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Attention" } })
@@ -37,8 +37,7 @@ describe("the unified inbox (Sprint 70)", () => {
         state: "pending_review",
         createdAt,
         updatedAt: createdAt,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -58,8 +57,7 @@ describe("the unified inbox (Sprint 70)", () => {
         fingerprint: `fp-${id}`,
         status: "open",
         createdAt,
-      })
-      .run();
+      });
     return id;
   }
 
@@ -131,8 +129,7 @@ describe("the unified inbox (Sprint 70)", () => {
     const questionId = await seedQuestion();
     expect((await buildAgentInboxFeed(db, workspaceId)).counts.ask).toBe(1);
     await db.update(agentQuestions)
-      .set({ status: "answered", answer: "No.", answeredAt: 300, answeredByLabel: "founder" })
-      .run();
+      .set({ status: "answered", answer: "No.", answeredAt: 300, answeredByLabel: "founder" });
     expect((await buildAgentInboxFeed(db, workspaceId)).counts.ask).toBe(0);
     expect(
       (await listWorkspacePriorities(db, workspaceId)).items.some((item) => item.id === questionId),

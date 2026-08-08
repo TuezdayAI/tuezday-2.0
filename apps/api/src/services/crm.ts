@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { CrmContact, CrmSyncFilter, Lead } from "@tuezday/contracts";
 import { crmSyncFilterSchema } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { type Db, rowsAffected } from "../db";
 import { crmContacts, crmSyncSettings, type CrmContactRow } from "../db/schema";
 import { crmAdapterFor, type CrmAdapter } from "../connectors/crm";
 import type { ConnectorFabric } from "../connectors/fabric";
@@ -36,8 +36,7 @@ export async function listCrmContacts(
         opts.discarded ? isNotNull(crmContacts.discardedAt) : isNull(crmContacts.discardedAt),
       ),
     )
-    .orderBy(desc(crmContacts.lastSyncedAt), desc(crmContacts.createdAt))
-    .all();
+    .orderBy(desc(crmContacts.lastSyncedAt), desc(crmContacts.createdAt));
   const leadById = new Map((await listLeads(db, workspaceId)).map((l) => [l.id, l]));
   return rows.map((row) => {
     const lead = row.leadId ? leadById.get(row.leadId) : undefined;
@@ -50,9 +49,8 @@ export async function discardCrmContact(db: Db, workspaceId: string, contactId: 
   const res = await db
     .update(crmContacts)
     .set({ discardedAt: Date.now() })
-    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, contactId)))
-    .run();
-  return res.changes > 0;
+    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, contactId)));
+  return rowsAffected(res) > 0;
 }
 
 /** Clear a contact's tombstone so the next sync refreshes it again. */
@@ -60,9 +58,8 @@ export async function restoreCrmContact(db: Db, workspaceId: string, contactId: 
   const res = await db
     .update(crmContacts)
     .set({ discardedAt: null })
-    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, contactId)))
-    .run();
-  return res.changes > 0;
+    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, contactId)));
+  return rowsAffected(res) > 0;
 }
 
 export async function getCrmContact(
@@ -70,11 +67,10 @@ export async function getCrmContact(
   workspaceId: string,
   crmContactId: string,
 ): Promise<CrmContact | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(crmContacts)
-    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, crmContactId)))
-    .get();
+    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, crmContactId))))[0];
   return row ? rowToCrmContact(row) : undefined;
 }
 
@@ -84,7 +80,7 @@ export async function getCrmContactByLead(
   leadId: string,
   connectionId?: string,
 ): Promise<CrmContact | undefined> {
-  const row = await db
+  const row = (await db
     .select()
     .from(crmContacts)
     .where(
@@ -95,8 +91,7 @@ export async function getCrmContactByLead(
         isNull(crmContacts.discardedAt),
         ...(connectionId ? [eq(crmContacts.connectionId, connectionId)] : []),
       ),
-    )
-    .get();
+    ))[0];
   return row ? rowToCrmContact(row) : undefined;
 }
 
@@ -123,8 +118,7 @@ export async function syncCrmContacts(
   const existing = await db
     .select()
     .from(crmContacts)
-    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.connectionId, connectionId)))
-    .all();
+    .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.connectionId, connectionId)));
   const byExternalId = new Map(existing.map((row) => [row.externalId, row]));
 
   const now = Date.now();
@@ -148,8 +142,7 @@ export async function syncCrmContacts(
           leadId: null,
           lastSyncedAt: now,
           createdAt: now,
-        })
-        .run();
+        });
       created++;
       continue;
     }
@@ -166,8 +159,7 @@ export async function syncCrmContacts(
         role: contact.role,
         lastSyncedAt: now,
       })
-      .where(eq(crmContacts.id, row.id))
-      .run();
+      .where(eq(crmContacts.id, row.id));
     if (changed) updated++;
   }
   return { fetched: contacts.length, created, updated, truncated };
@@ -204,7 +196,7 @@ export async function importCrmContactAsLead(
       xHandle: "",
     });
 
-  await db.update(crmContacts).set({ leadId: lead.id }).where(eq(crmContacts.id, contact.id)).run();
+  await db.update(crmContacts).set({ leadId: lead.id }).where(eq(crmContacts.id, contact.id));
   return { ok: true, lead, linkedExisting: Boolean(existing) };
 }
 
@@ -239,17 +231,16 @@ export async function pushLeadToCrm(
     lastSyncedAt: now,
     createdAt: now,
   };
-  await db.insert(crmContacts).values(row).run();
+  await db.insert(crmContacts).values(row);
   return rowToCrmContact(row);
 }
 
 /** The stored sync filter for a connection, or an empty filter (no scoping). */
 export async function getCrmSyncFilter(db: Db, connectionId: string): Promise<CrmSyncFilter> {
-  const row = await db
+  const row = (await db
     .select()
     .from(crmSyncSettings)
-    .where(eq(crmSyncSettings.connectionId, connectionId))
-    .get();
+    .where(eq(crmSyncSettings.connectionId, connectionId)))[0];
   if (!row) return {};
   const parsed = crmSyncFilterSchema.safeParse(JSON.parse(row.filterJson));
   return parsed.success ? parsed.data : {};
@@ -266,8 +257,7 @@ export async function setCrmSyncFilter(
   const filterJson = JSON.stringify(filter);
   await db.insert(crmSyncSettings)
     .values({ connectionId, workspaceId, filterJson, updatedAt: now })
-    .onConflictDoUpdate({ target: crmSyncSettings.connectionId, set: { filterJson, updatedAt: now } })
-    .run();
+    .onConflictDoUpdate({ target: crmSyncSettings.connectionId, set: { filterJson, updatedAt: now } });
   return filter;
 }
 

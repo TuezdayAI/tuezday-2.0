@@ -98,7 +98,7 @@ describe("deliverable routes (Sprint 63)", () => {
   let packageId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db, llm: dualGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Routes" } })
@@ -138,7 +138,7 @@ describe("deliverable routes (Sprint 63)", () => {
         observedAt: Date.now(),
       });
     });
-    const story = (await db.select().from(canonicalExternalStories).all())[0]!;
+    const story = (await db.select().from(canonicalExternalStories))[0]!;
     const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
     const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const opportunityId = randomUUID();
@@ -170,8 +170,7 @@ describe("deliverable routes (Sprint 63)", () => {
         expiresAt: null,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
     packageId = await createPackageFromOpportunity(db, workspaceId, opportunityId, {
       userId: null,
     });
@@ -183,7 +182,7 @@ describe("deliverable routes (Sprint 63)", () => {
   });
 
   async function firstDeliverableId(): Promise<string> {
-    return (await db.select().from(deliverables).all())[0]!.id;
+    return (await db.select().from(deliverables))[0]!.id;
   }
 
   it("fan-out route creates deliverables from a ready package; 400 otherwise", async () => {

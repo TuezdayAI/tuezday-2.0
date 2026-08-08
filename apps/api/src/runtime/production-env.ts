@@ -72,12 +72,12 @@ export function validateProductionEnv(
   if (isMissing(env.APP_BASE_URL)) {
     errors.push("APP_BASE_URL is not set.");
   }
-  // A container must never fall back to a cwd-relative SQLite file — the
-  // cwd is an ephemeral layer, not the mounted volume path the comment in
-  // .env.example promises. See resolveDbFile in ./db-file.ts.
-  if (isMissing(env.TUEZDAY_DB)) {
+  // A container must never fall back to the local development server —
+  // resolveDatabaseUrl's default is a loopback address, which inside a
+  // container is the container itself. See ./database-url.ts.
+  if (isMissing(env.DATABASE_URL)) {
     errors.push(
-      "TUEZDAY_DB is not set — a container must not fall back to a cwd-relative database path.",
+      "DATABASE_URL is not set — a container must not fall back to the local development database.",
     );
   }
 

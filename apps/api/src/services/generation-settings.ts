@@ -14,11 +14,10 @@ import { generationSettings } from "../db/schema";
  * 2026-06-17). Booleans map to/from the 0/1 integer columns.
  */
 export async function getGenerationSettings(db: Db, workspaceId: string): Promise<GenerationSettings> {
-  const row = await db
+  const row = (await db
     .select()
     .from(generationSettings)
-    .where(eq(generationSettings.workspaceId, workspaceId))
-    .get();
+    .where(eq(generationSettings.workspaceId, workspaceId)))[0];
   return row
     ? {
         workspaceId,
@@ -70,7 +69,6 @@ export async function updateGenerationSettings(
         flagThreshold: next.flagThreshold,
         updatedAt: next.updatedAt,
       },
-    })
-    .run();
+    });
   return next;
 }

@@ -50,8 +50,7 @@ const RHETORICAL = {
 
 async function seed(db: Db): Promise<void> {
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Extract", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Extract", createdAt: 1, updatedAt: 1 });
 }
 
 let counter = 0;
@@ -88,14 +87,13 @@ async function addEdit(
       editDistance: 60,
       digestedAt: null,
       createdAt: overrides.createdAt ?? counter,
-    })
-    .run();
+    });
   return id;
 }
 
 describe("preference extraction (Sprint 68)", () => {
   it("groups edits by scope so a rule cannot escape the channel it was learned on (D-68.4)", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db, { channel: "linkedin" });
     await addEdit(db, { channel: "linkedin" });
@@ -108,7 +106,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("shows the model both sides of every diff and the founder's instruction", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db, { instruction: "stop hedging" });
     const [group] = groupEditsByScope(await listPreferenceEdits(db, WORKSPACE_ID));
@@ -121,7 +119,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("creates an active rule scoped to the group, with its evidence", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db);
     const llm = new ScriptedTextGateway([extraction([RHETORICAL])]);
@@ -144,7 +142,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("reinforces a restated rule instead of duplicating it", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db);
     await runPreferenceExtraction(
@@ -174,7 +172,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("keeps a low-confidence guess out of generation as a candidate (D-68.9)", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db);
     await runPreferenceExtraction(
@@ -187,7 +185,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("digests the batch even when the model call fails, so one bad diff cannot wedge the loop", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db);
     const result = await runPreferenceExtraction(db, new ThrowingGateway(), WORKSPACE_ID);
@@ -196,7 +194,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("never re-reads an edit it already digested", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db);
     await runPreferenceExtraction(
@@ -215,7 +213,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("treats an empty extraction as a correct answer", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     await addEdit(db);
     const result = await runPreferenceExtraction(
@@ -229,7 +227,7 @@ describe("preference extraction (Sprint 68)", () => {
   });
 
   it("retires a rule only when it stopped being observed AND stopped being applied (D-68.8)", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     await seed(db);
     const now = 1_000_000_000_000;
     const stale = now - RETIRE_AFTER_MS - 1;
@@ -255,8 +253,7 @@ describe("preference extraction (Sprint 68)", () => {
         // Still working: nobody has had to re-teach it, but it fires constantly.
         { ...base, id: uuid(901), lastObservedAt: stale, lastAppliedAt: now - 1000 },
         { ...base, id: uuid(902), lastObservedAt: now - 1000, lastAppliedAt: null },
-      ])
-      .run();
+      ]);
 
     expect(await retireStaleRules(db, WORKSPACE_ID, now)).toBe(1);
     const byId = new Map((await listPreferenceRules(db, WORKSPACE_ID)).map((r) => [r.id, r.status]));

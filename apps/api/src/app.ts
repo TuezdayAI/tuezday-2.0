@@ -324,7 +324,7 @@ export async function buildApp({
   registerPublicApiRoutes(app, db);
 
   app.get("/health", async () => {
-    await db.run(sql`select 1`);
+    await db.execute(sql`select 1`);
     return { status: "ok", db: "ok" };
   });
 

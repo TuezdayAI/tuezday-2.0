@@ -28,7 +28,7 @@ import { getCampaignInsights, getWorkspaceInsights } from "./insights";
 import { backfillMetrics } from "./metrics-backfill";
 
 async function insertCampaign(db: Db, workspaceId: string, id: string, name: string) {
-  await db.insert(workspaces).values({ id: workspaceId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).onConflictDoNothing().run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).onConflictDoNothing();
   await db.insert(campaigns)
     .values({
       id,
@@ -47,13 +47,12 @@ async function insertCampaign(db: Db, workspaceId: string, id: string, name: str
       autoDailyCap: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 describe("insights.service", () => {
   it("getCampaignInsights handles an empty campaign safely", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const wsId = randomUUID();
     const cId = randomUUID();
     await insertCampaign(db, wsId, cId, "Empty");
@@ -74,7 +73,7 @@ describe("insights.service", () => {
   });
 
   it("aggregates data correctly across all panes", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const wsId = randomUUID();
     const cId = randomUUID();
     await insertCampaign(db, wsId, cId, "Full");
@@ -83,7 +82,7 @@ describe("insights.service", () => {
     const adCId = randomUUID();
     const adAccId = randomUUID();
 
-    await db.insert(adAccounts).values({ id: adAccId, workspaceId: wsId, externalId: "e1", name: "Acc", currency: "USD", createdAt: Date.now() }).run();
+    await db.insert(adAccounts).values({ id: adAccId, workspaceId: wsId, externalId: "e1", name: "Acc", currency: "USD", createdAt: Date.now() });
     await db.insert(adCampaigns)
       .values({
         id: adCId,
@@ -94,8 +93,7 @@ describe("insights.service", () => {
         campaignId: cId,
         lastSyncedAt: Date.now(),
         createdAt: Date.now(),
-      })
-      .run();
+      });
     await db.insert(adCampaignMetrics)
       .values({
         id: randomUUID(),
@@ -109,8 +107,7 @@ describe("insights.service", () => {
         source: "sync",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
 
     // Quality: drafts and generations
     const d1 = randomUUID();
@@ -119,8 +116,7 @@ describe("insights.service", () => {
       .values([
         { id: d1, workspaceId: wsId, campaignId: cId, state: "approved", taskType: "linkedin_post", channel: "linkedin", createdAt: Date.now(), updatedAt: Date.now(), content: "1", originalContent: "1" },
         { id: d2, workspaceId: wsId, campaignId: cId, state: "rejected", taskType: "linkedin_post", channel: "linkedin", createdAt: Date.now(), updatedAt: Date.now(), content: "2", originalContent: "2" },
-      ])
-      .run();
+      ]);
     await db.insert(generations)
       .values({
         id: randomUUID(),
@@ -136,13 +132,12 @@ describe("insights.service", () => {
         durationMs: 100,
         sectionsJson: "[]",
         createdAt: Date.now(),
-      })
-      .run();
+      });
 
     // Organic
     const p1 = randomUUID();
     const connId = randomUUID();
-    await db.insert(connections).values({ id: connId, workspaceId: wsId, providerKey: "linkedin", status: "active", nangoConnectionId: "nango1", configJson: "{}", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(connections).values({ id: connId, workspaceId: wsId, providerKey: "linkedin", status: "active", nangoConnectionId: "nango1", configJson: "{}", createdAt: Date.now(), updatedAt: Date.now() });
 
     await db.insert(publications)
       .values({
@@ -160,8 +155,7 @@ describe("insights.service", () => {
         scheduledFor: Date.now(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     await db.insert(publicationMetrics)
       .values({
         id: randomUUID(),
@@ -172,8 +166,7 @@ describe("insights.service", () => {
         impressions: 500,
         capturedAt: Date.now(),
         createdAt: Date.now(),
-      })
-      .run();
+      });
     await db.insert(engagementMetrics)
       .values({
         id: randomUUID(),
@@ -183,8 +176,7 @@ describe("insights.service", () => {
         engagements: 2,
         recordedAt: Date.now(),
         createdAt: Date.now(),
-      })
-      .run();
+      });
 
     // Outbound
     const l1 = randomUUID();
@@ -197,8 +189,7 @@ describe("insights.service", () => {
         channelsJson: "[]",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     const m1 = randomUUID();
     await db.insert(launchMessages)
       .values({
@@ -210,10 +201,9 @@ describe("insights.service", () => {
         status: "sent",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     const inboxConnId = randomUUID();
-    await db.insert(connections).values({ id: inboxConnId, workspaceId: wsId, providerKey: "google", status: "active", nangoConnectionId: "nango2", configJson: "{}", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(connections).values({ id: inboxConnId, workspaceId: wsId, providerKey: "google", status: "active", nangoConnectionId: "nango2", configJson: "{}", createdAt: Date.now(), updatedAt: Date.now() });
 
     await db.insert(inboxItems)
       .values({
@@ -229,8 +219,7 @@ describe("insights.service", () => {
         externalCreatedAt: Date.now(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
 
     const campaign = { id: cId, workspaceId: wsId, name: "Full", status: "active" } as any;
     await backfillMetrics(db);
@@ -259,7 +248,7 @@ describe("insights.service", () => {
   });
 
   it("getWorkspaceInsights aggregates correctly and measures brain completeness", async () => {
-    const db = createTestDb();
+    const db = await createTestDb();
     const wsId = randomUUID();
     await insertCampaign(db, wsId, randomUUID(), "C1");
 
@@ -267,11 +256,9 @@ describe("insights.service", () => {
       .values([
         { id: randomUUID(), workspaceId: wsId, docType: "soul", content: "filled", createdAt: Date.now(), updatedAt: Date.now() },
         { id: randomUUID(), workspaceId: wsId, docType: "icp", content: "   ", createdAt: Date.now(), updatedAt: Date.now() }, // empty
-      ])
-      .run();
+      ]);
     await db.insert(guidanceOverrides)
-      .values({ id: randomUUID(), workspaceId: wsId, channel: "linkedin", content: "X", createdAt: Date.now(), updatedAt: Date.now() })
-      .run();
+      .values({ id: randomUUID(), workspaceId: wsId, channel: "linkedin", content: "X", createdAt: Date.now(), updatedAt: Date.now() });
 
     await backfillMetrics(db);
     const insights = await getWorkspaceInsights(db, wsId);

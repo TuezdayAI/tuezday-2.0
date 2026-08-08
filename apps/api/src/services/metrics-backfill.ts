@@ -35,7 +35,7 @@ export async function backfillMetrics(db: Db): Promise<MetricsBackfillSummary> {
   // campaign-subject copy when the reading's draft belongs to a campaign —
   // resolved here at backfill time, matching what the legacy campaign-scoped
   // read derived through its drafts join) --------------------------------
-  const manualRows = await db.select().from(engagementMetrics).all();
+  const manualRows = await db.select().from(engagementMetrics);
   const manualDraftIds = [...new Set(manualRows.map((r) => r.draftId).filter((d): d is string => !!d))];
   const campaignByDraftId = new Map(
     (manualDraftIds.length
@@ -43,7 +43,6 @@ export async function backfillMetrics(db: Db): Promise<MetricsBackfillSummary> {
           .select({ id: drafts.id, campaignId: drafts.campaignId })
           .from(drafts)
           .where(inArray(drafts.id, manualDraftIds))
-          .all()
       : []
     ).map((d) => [d.id, d.campaignId]),
   );
@@ -70,7 +69,7 @@ export async function backfillMetrics(db: Db): Promise<MetricsBackfillSummary> {
   }
 
   // --- Publication snapshots (cumulative at 24h/7d; periodStart = publishedAt)
-  const pubMetricRows = await db.select().from(publicationMetrics).all();
+  const pubMetricRows = await db.select().from(publicationMetrics);
   const pubIds = [...new Set(pubMetricRows.map((r) => r.publicationId))];
   const publishedAtById = new Map(
     (pubIds.length
@@ -78,7 +77,6 @@ export async function backfillMetrics(db: Db): Promise<MetricsBackfillSummary> {
           .select({ id: publications.id, publishedAt: publications.publishedAt })
           .from(publications)
           .where(inArray(publications.id, pubIds))
-          .all()
       : []
     ).map((p) => [p.id, p.publishedAt]),
   );
@@ -104,7 +102,7 @@ export async function backfillMetrics(db: Db): Promise<MetricsBackfillSummary> {
   }
 
   // --- Ad daily buckets (1d keyed on the UTC day) ----------------------------
-  const adRows = await db.select().from(adCampaignMetrics).all();
+  const adRows = await db.select().from(adCampaignMetrics);
   const adCampaignIds = [...new Set(adRows.map((r) => r.adCampaignId))];
   const knownCampaigns = new Set(
     (adCampaignIds.length
@@ -112,7 +110,6 @@ export async function backfillMetrics(db: Db): Promise<MetricsBackfillSummary> {
           .select({ id: adCampaigns.id })
           .from(adCampaigns)
           .where(inArray(adCampaigns.id, adCampaignIds))
-          .all()
       : []
     ).map((c) => c.id),
   );

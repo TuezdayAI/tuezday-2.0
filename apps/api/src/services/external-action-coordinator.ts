@@ -435,12 +435,10 @@ export function createExternalActionRuntime({
           subjectFingerprint: action.fingerprint,
           policySnapshotJson: JSON.stringify(action.policy),
           createdAt: now,
-        })
-        .run();
+        });
       await tx.update(externalActions)
         .set({ status: "cancelled", completedAt: now, updatedAt: now })
-        .where(eq(externalActions.id, actionId))
-        .run();
+        .where(eq(externalActions.id, actionId));
     });
     return submission((await getExternalAction(db, workspaceId, actionId))!);
   }
@@ -584,12 +582,10 @@ export function createExternalActionRuntime({
             subjectFingerprint: action.fingerprint,
             policySnapshotJson: JSON.stringify(action.policy),
             createdAt: collapsedAt,
-          })
-          .run();
+          });
         await tx.update(externalActions)
           .set({ status: "authorized", authorizedAt: collapsedAt, updatedAt: collapsedAt })
-          .where(eq(externalActions.id, collapsedActionId))
-          .run();
+          .where(eq(externalActions.id, collapsedActionId));
       });
       // There is no click to attribute here, but there *is* an authorization,
       // and it belongs to the human who approved the draft. Without this the
@@ -647,12 +643,10 @@ export function createExternalActionRuntime({
             subjectFingerprint: action.fingerprint,
             policySnapshotJson: JSON.stringify(action.policy),
             createdAt: now,
-          })
-          .run();
+          });
         await tx.update(externalActions)
           .set({ status: "authorized", authorizedAt: now, updatedAt: now })
-          .where(eq(externalActions.id, actionId))
-          .run();
+          .where(eq(externalActions.id, actionId));
       });
       if (actor.userId) {
         await track(db, analytics, {

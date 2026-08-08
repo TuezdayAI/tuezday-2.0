@@ -384,7 +384,7 @@ describe("Ads reporting API", () => {
       }),
     );
     received = [];
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({
       db,
       llm: fakeLlm,
@@ -532,7 +532,7 @@ describe("Ads reporting API", () => {
 
       // Sprint 55 dual-write: the connected sync also lands 1d facts in the
       // unified metrics table, with source "synced".
-      const facts = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+      const facts = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId));
       expect(facts.length).toBeGreaterThan(0);
       for (const f of facts) {
         expect(f.subjectType).toBe("ad_campaign");

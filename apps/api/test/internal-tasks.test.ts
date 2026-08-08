@@ -10,7 +10,7 @@ describe("internal task boundary", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildApp({ db, workerToken: WORKER_TOKEN });
   });
 

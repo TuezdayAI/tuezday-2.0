@@ -44,10 +44,9 @@ let db: Db;
 let ctx: ToolContext;
 
 beforeEach(async () => {
-  db = createTestDb();
+  db = await createTestDb();
   await db.insert(workspaces)
-    .values({ id: WORKSPACE_ID, name: "Read tools", createdAt: 1, updatedAt: 1 })
-    .run();
+    .values({ id: WORKSPACE_ID, name: "Read tools", createdAt: 1, updatedAt: 1 });
   ctx = {
     db,
     evidence: null as unknown as ToolContext["evidence"],
@@ -192,12 +191,10 @@ describe("get_campaign_plan", () => {
         guidance: "Be concrete.",
         createdAt: 1,
         activatedAt: 2,
-      })
-      .run();
+      });
     await db.update(campaigns)
       .set({ currentPlanRevisionId: planId })
-      .where(eq(campaigns.id, campaign.id))
-      .run();
+      .where(eq(campaigns.id, campaign.id));
     const laneId = randomUUID();
     await db.insert(campaignLanes)
       .values({
@@ -208,8 +205,7 @@ describe("get_campaign_plan", () => {
         name: "LinkedIn founder",
         createdAt: 1,
         updatedAt: 1,
-      })
-      .run();
+      });
     await db.insert(campaignLaneRevisions)
       .values({
         id: randomUUID(),
@@ -225,8 +221,7 @@ describe("get_campaign_plan", () => {
         reactivePeriod: "week",
         reactiveCap: 3,
         createdAt: 1,
-      })
-      .run();
+      });
 
     const result = (await getCampaignPlanTool.run(ctx, { campaignId: campaign.id })) as {
       plan: { objective: string; pillars: string[] };
@@ -318,8 +313,7 @@ async function seedDraft(opts: {
       state: opts.state,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
-    .run();
+    });
   return id;
 }
 
@@ -333,8 +327,7 @@ async function seedConnection(): Promise<string> {
       nangoConnectionId: `nango-${id}`,
       createdAt: 1,
       updatedAt: 1,
-    })
-    .run();
+    });
   return id;
 }
 
@@ -359,8 +352,7 @@ async function seedPublication(
       externalUrl: `https://example.com/${id}`,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    })
-    .run();
+    });
   return id;
 }
 
@@ -381,8 +373,7 @@ describe("list_recent_publications_with_metrics", () => {
         impressions: 900,
         capturedAt: 1,
         createdAt: 1,
-      })
-      .run();
+      });
 
     const result = (await listRecentPublicationsTool.run(ctx, {})) as {
       publications: Array<{ title: string; metrics: Array<{ window: string; likes: number }> }>;
@@ -484,8 +475,7 @@ describe("find_instructive_rejections", () => {
         sourceContent: "Too salesy pricing pitch.",
         status: "done",
         createdAt: 1,
-      })
-      .run();
+      });
     await seedDraft({
       state: "approved",
       content: "Tight, edited post.",
@@ -522,8 +512,7 @@ describe("search_discovery_items", () => {
         configJson: "{}",
         status: "ok",
         createdAt: 1,
-      })
-      .run();
+      });
     const base = {
       workspaceId: WORKSPACE_ID,
       sourceId,
@@ -550,8 +539,7 @@ describe("search_discovery_items", () => {
           summary: "Another one.",
           score: 90,
         },
-      ])
-      .run();
+      ]);
   }
 
   it("orders by score without a query and by BM25 with one", async () => {

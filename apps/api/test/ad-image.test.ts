@@ -147,7 +147,7 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
     design = fakeDesign();
     downloads = [];
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db: await createTestDb(),
       llm: fakeGateway(),
       connectors: fakeFabric(state),
       fetcher: imageFetcher(downloads),
@@ -276,7 +276,7 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
       expect((await generateImage(randomUUID())).statusCode).toBe(404);
 
       const failingApp = await buildAuthedApp({
-        db: createTestDb(),
+        db: await createTestDb(),
         llm: fakeGateway(),
         connectors: fakeFabric(graphState()),
         fetcher: imageFetcher([]),

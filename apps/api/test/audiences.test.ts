@@ -85,7 +85,7 @@ describe("audiences API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({ db });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Aud" } })
@@ -122,8 +122,7 @@ describe("audiences API", () => {
         lastError: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      })
-      .run();
+      });
     return id;
   }
 
@@ -142,8 +141,7 @@ describe("audiences API", () => {
         leadId: over.leadId ?? null,
         lastSyncedAt: Date.now(),
         createdAt: Date.now(),
-      })
-      .run();
+      });
     return id;
   }
 

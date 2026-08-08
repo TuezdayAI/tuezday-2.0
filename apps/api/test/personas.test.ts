@@ -56,7 +56,7 @@ describe("personas API", () => {
   let state: FabricState;
 
   beforeEach(async () => {
-    db = createTestDb();
+    db = await createTestDb();
     state = { healthy: true, connections: new Map() };
     app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     const res = await app.inject({

@@ -144,7 +144,7 @@ describe("discovery API", () => {
     personaRef = { id: null };
     campaignRef = { id: null };
     const { fetcher } = makeFetcher();
-    db = createTestDb();
+    db = await createTestDb();
     app = await buildAuthedApp({
       db,
       llm: scoringGateway(personaRef, campaignRef),
@@ -236,8 +236,7 @@ describe("discovery API", () => {
           lastAttemptedAt: null,
           executionVersion: 1,
           createdAt: 1,
-        })
-        .run();
+        });
 
       const activated = await app.inject({
         method: "PATCH",
@@ -311,8 +310,7 @@ describe("discovery API", () => {
             feedUrl: "http://169.254.169.254/latest/meta-data",
           }),
         })
-        .where(eq(discoverySources.id, source.id))
-        .run();
+        .where(eq(discoverySources.id, source.id));
 
       const result = await run();
       expect(result.sources[0]?.error).toBe(
@@ -359,11 +357,10 @@ describe("discovery API", () => {
       expect(JSON.stringify(update.json())).not.toContain(
         "https://feeds.example.com/blog.xml",
       );
-      const stored = (await db
+      const stored = ((await db
         .select()
         .from(discoverySources)
-        .where(eq(discoverySources.id, source.id))
-        .get())!;
+        .where(eq(discoverySources.id, source.id)))[0])!;
       expect(JSON.parse(stored.configJson)).toEqual(source.config);
     });
 
@@ -375,8 +372,7 @@ describe("discovery API", () => {
           lastError: "transport_failed: stale failure",
           backoffUntil: Date.now() + 60_000,
         })
-        .where(eq(discoverySources.id, source.id))
-        .run();
+        .where(eq(discoverySources.id, source.id));
 
       const update = await app.inject({
         method: "PATCH",
@@ -429,8 +425,7 @@ describe("discovery API", () => {
       const cancelled = await db
         .select()
         .from(discoveryJobs)
-        .where(eq(discoveryJobs.workspaceId, workspaceId))
-        .all();
+        .where(eq(discoveryJobs.workspaceId, workspaceId));
       expect(cancelled).toHaveLength(2);
       expect(
         cancelled.map((job) => ({
@@ -625,8 +620,7 @@ describe("discovery API", () => {
           matchingState: "pending",
           matchingError: null,
         })
-        .where(eq(discoveredItems.id, top.id))
-        .run();
+        .where(eq(discoveredItems.id, top.id));
 
       const res = await app.inject({
         method: "POST",
@@ -642,8 +636,7 @@ describe("discovery API", () => {
         await db
           .select()
           .from(signals)
-          .where(eq(signals.workspaceId, workspaceId))
-          .all(),
+          .where(eq(signals.workspaceId, workspaceId)),
       ).toEqual([]);
     });
 
@@ -688,8 +681,7 @@ describe("discovery API", () => {
       const [top] = await items();
       await db.update(discoveredItems)
         .set({ suggestedPersonaId: null, suggestedCampaignId: null })
-        .where(eq(discoveredItems.id, top.id))
-        .run();
+        .where(eq(discoveredItems.id, top.id));
 
       const res = await app.inject({
         method: "POST",
@@ -706,7 +698,7 @@ describe("discovery API", () => {
         personaId: personaRef.id,
         campaignId: campaignRef.id,
       });
-      const stored = (await db.select().from(signals).where(eq(signals.id, signal.id)).get())!;
+      const stored = ((await db.select().from(signals).where(eq(signals.id, signal.id)))[0])!;
       expect(stored.suggestedPersonaId).toBeNull();
       expect(stored.suggestedCampaignId).toBeNull();
     });
@@ -756,14 +748,13 @@ describe("discovery API", () => {
         matchingState: "pending",
       });
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
       ).toHaveLength(0);
       expect(
         await db
           .select()
           .from(signalMatches)
-          .where(eq(signalMatches.workspaceId, workspaceId))
-          .all(),
+          .where(eq(signalMatches.workspaceId, workspaceId)),
       ).toHaveLength(0);
     });
 
@@ -785,14 +776,13 @@ describe("discovery API", () => {
       );
       expect(storedItem).toMatchObject({ status: "new", signalId: null });
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
       ).toHaveLength(0);
       expect(
         await db
           .select()
           .from(signalMatches)
-          .where(eq(signalMatches.workspaceId, workspaceId))
-          .all(),
+          .where(eq(signalMatches.workspaceId, workspaceId)),
       ).toHaveLength(0);
     });
 
@@ -816,7 +806,7 @@ describe("discovery API", () => {
       expect(accepted.statusCode).toBe(404);
       expect(accepted.json()).toEqual({ error: "item_not_found" });
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, otherWorkspaceId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, otherWorkspaceId)),
       ).toHaveLength(0);
     });
 
@@ -843,8 +833,7 @@ describe("discovery API", () => {
       ).json();
       await db.update(discoveredItems)
         .set({ sourceId: foreignSource.id })
-        .where(eq(discoveredItems.id, top.id))
-        .run();
+        .where(eq(discoveredItems.id, top.id));
 
       const accepted = await app.inject({
         method: "POST",
@@ -854,7 +843,7 @@ describe("discovery API", () => {
       expect(accepted.statusCode).toBe(404);
       expect(accepted.json()).toEqual({ error: "related_object_not_found" });
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
       ).toHaveLength(0);
     });
 
@@ -878,8 +867,7 @@ describe("discovery API", () => {
       ).json().id as string;
       await db.update(discoveredItemMatches)
         .set({ personaId: foreignPersonaId })
-        .where(eq(discoveredItemMatches.itemId, top.id))
-        .run();
+        .where(eq(discoveredItemMatches.itemId, top.id));
       const visibleItem = (await items()).find(
         (candidate: { id: string }) => candidate.id === top.id,
       );
@@ -898,14 +886,13 @@ describe("discovery API", () => {
       );
       expect(storedItem).toMatchObject({ status: "new", signalId: null });
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
       ).toHaveLength(0);
       expect(
         await db
           .select()
           .from(signalMatches)
-          .where(eq(signalMatches.workspaceId, workspaceId))
-          .all(),
+          .where(eq(signalMatches.workspaceId, workspaceId)),
       ).toHaveLength(0);
     });
 
@@ -922,8 +909,7 @@ describe("discovery API", () => {
       ).json().id as string;
       await db.update(discoveredItemMatches)
         .set({ workspaceId: otherWorkspaceId })
-        .where(eq(discoveredItemMatches.itemId, top.id))
-        .run();
+        .where(eq(discoveredItemMatches.itemId, top.id));
       const visibleItem = (await items()).find(
         (candidate: { id: string }) => candidate.id === top.id,
       );
@@ -936,14 +922,13 @@ describe("discovery API", () => {
 
       expect(accepted.statusCode).toBe(404);
       expect(accepted.json()).toEqual({ error: "related_object_not_found" });
-      const storedItem = await db
+      const storedItem = (await db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.id, top.id))
-        .get();
+        .where(eq(discoveredItems.id, top.id)))[0];
       expect(storedItem).toMatchObject({ status: "new", signalId: null });
       expect(
-        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)),
       ).toHaveLength(0);
     });
 
@@ -1028,7 +1013,7 @@ interface MatchingHarness {
  * to its own campaign), driven by a scriptable scoring gateway.
  */
 async function buildMatchingHarness(fetcher?: SafeFetchService): Promise<MatchingHarness> {
-  const db = createTestDb();
+  const db = await createTestDb();
   const scoringPrompts: string[] = [];
   let responder: (prompt: string) => unknown = () => [];
   const llm: LlmGateway = {
@@ -1159,8 +1144,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     const rows = await h.db
       .select()
       .from(discoveredItemMatches)
-      .where(eq(discoveredItemMatches.itemId, top.id as string))
-      .all();
+      .where(eq(discoveredItemMatches.itemId, top.id as string));
     expect(rows).toHaveLength(2);
 
     const other = list.find((i) => i.score === 40)!;
@@ -1187,8 +1171,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
       await h.db
         .update(campaigns)
         .set({ workspaceId: otherWorkspaceId })
-        .where(eq(campaigns.id, h.campaignA))
-        .run();
+        .where(eq(campaigns.id, h.campaignA));
       return [
         {
           index: 0,
@@ -1215,19 +1198,17 @@ describe("multi-candidate scoring (Sprint 45)", () => {
       await h.db
         .select()
         .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.itemId, target.id as string))
-        .all(),
+        .where(eq(discoveredItemMatches.itemId, target.id as string)),
     ).toEqual([]);
   });
 
   it("blocks acceptance while matching is in flight", async () => {
     let rejection: unknown;
     h.setResponder(async () => {
-      const item = (await h.db
+      const item = ((await h.db
         .select()
         .from(discoveredItems)
-        .where(eq(discoveredItems.workspaceId, h.workspaceId))
-        .get())!;
+        .where(eq(discoveredItems.workspaceId, h.workspaceId)))[0])!;
       try {
         await acceptDiscoveredItem(h.db, h.workspaceId, item.id);
       } catch (error) {
@@ -1263,8 +1244,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
       await h.db
         .select()
         .from(signals)
-        .where(eq(signals.workspaceId, h.workspaceId))
-        .all(),
+        .where(eq(signals.workspaceId, h.workspaceId)),
     ).toEqual([]);
   });
 
@@ -1289,8 +1269,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     const before = await h.db
       .select()
       .from(discoveredItemMatches)
-      .where(eq(discoveredItemMatches.itemId, target.id as string))
-      .all();
+      .where(eq(discoveredItemMatches.itemId, target.id as string));
 
     const bumped = await h.app.inject({
       method: "PUT",
@@ -1301,13 +1280,15 @@ describe("multi-candidate scoring (Sprint 45)", () => {
       },
     });
     expect(bumped.statusCode).toBe(200);
-    await h.db.run(sql.raw(`
+    await h.db.execute(sql.raw(`
+      CREATE FUNCTION reject_fault_scoring_match() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'fault_after_first_match'; END
+      $$ LANGUAGE plpgsql;
       CREATE TRIGGER reject_fault_scoring_match
       BEFORE INSERT ON discovered_item_matches
-      WHEN NEW.reason = 'fault_after_first_match'
-      BEGIN
-        SELECT RAISE(ABORT, 'fault_after_first_match');
-      END
+      FOR EACH ROW
+      WHEN (NEW.reason = 'fault_after_first_match')
+      EXECUTE FUNCTION reject_fault_scoring_match();
     `));
     h.setResponder((prompt) => {
       const targetIndex = prompt
@@ -1343,8 +1324,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
       await h.db
         .select()
         .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.itemId, target.id as string))
-        .all(),
+        .where(eq(discoveredItemMatches.itemId, target.id as string)),
     ).toEqual(before);
     expect((await h.items()).find((item) => item.id === target.id)).toMatchObject({
       score: 88,
@@ -1406,7 +1386,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     ]);
     await h.addSource();
     await h.run();
-    const rows = await h.db.select().from(discoveredItems).all();
+    const rows = await h.db.select().from(discoveredItems);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(row.matchingState).toBe("retryable_error");
@@ -1443,8 +1423,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     const rows = await h.db
       .select()
       .from(signalMatches)
-      .where(eq(signalMatches.signalId, signal.id))
-      .all();
+      .where(eq(signalMatches.signalId, signal.id));
     expect(rows).toHaveLength(2);
 
     // the signal inbox serializes them too
