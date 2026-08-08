@@ -84,11 +84,24 @@ export function fixtureDatabaseName(): string {
  */
 export async function cloneTemplate(client: pg.Client, name: string): Promise<void> {
   const from = `${quoteIdent(name)} TEMPLATE ${quoteIdent(TEMPLATE_DB)}`;
-  try {
-    await client.query(`CREATE DATABASE ${from} STRATEGY = FILE_COPY`);
-  } catch (err) {
-    if ((err as { code?: string }).code !== "42601") throw err; // syntax_error
-    await client.query(`CREATE DATABASE ${from}`);
+  // Cloning needs the template to have no sessions on it. The setup's own
+  // connection is closed before any worker starts, but a backend can take a
+  // moment to exit after the client disconnects, so the first clone of a run
+  // can lose that race. Retry briefly rather than fail the whole file.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await client.query(`CREATE DATABASE ${from} STRATEGY = FILE_COPY`);
+      return;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "42601") {
+        // syntax_error: Postgres 14 and older have no STRATEGY clause.
+        await client.query(`CREATE DATABASE ${from}`);
+        return;
+      }
+      if (code !== "55006" || attempt >= 20) throw err; // object_in_use
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 }
 

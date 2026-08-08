@@ -37,6 +37,20 @@ export async function setup(): Promise<void> {
 
   const db = await createDb(urlFor(TEMPLATE_DB));
   await closeDb(db);
+
+  // Ending the pool sends Terminate; the backend exits a moment later. Cloning
+  // a template with a live session on it fails outright, so wait it out here
+  // rather than making every worker's first fixture retry.
+  const waiter = await adminClient();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const { rows } = await waiter.query<{ n: string }>(
+      `SELECT count(*) AS n FROM pg_stat_activity WHERE datname = $1`,
+      [TEMPLATE_DB],
+    );
+    if (Number(rows[0]?.n ?? 0) === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await waiter.end();
 }
 
 export async function teardown(): Promise<void> {
