@@ -63,6 +63,7 @@ export function rowToMessage(row: ChatMessageRow): ChatMessage {
     // Sprint 77: the typed result cards this turn rendered.
     cards: parseArray<ChatCard>(row.cardsJson),
     agentRunId: row.agentRunId ?? null,
+    agentTaskId: row.agentTaskId ?? null,
     costCents: row.costCents,
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
@@ -275,6 +276,7 @@ export interface AppendMessageInput {
   cards?: ChatCard[];
   /** The agent_run behind this assistant turn (Sprint 76). */
   agentRunId?: string | null;
+  agentTaskId?: string | null;
   costCents?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -308,6 +310,7 @@ export async function appendMessage(
     proposalJson: null,
     producedRef: input.producedRef ?? null,
     agentRunId: input.agentRunId ?? null,
+    agentTaskId: input.agentTaskId ?? null,
     costCents: input.costCents ?? 0,
     inputTokens: input.inputTokens ?? 0,
     outputTokens: input.outputTokens ?? 0,

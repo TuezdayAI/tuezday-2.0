@@ -9,6 +9,7 @@ import {
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { buildAgentInboxFeed } from "../services/agent-inbox";
+import { getAgentTask, requeueAgentTask } from "../services/agent-tasks";
 import {
   answerAgentQuestion,
   getAgentQuestion,
@@ -129,7 +130,20 @@ export function registerQuestionRoutes(
         question: outcome.question,
         rule: outcome.rule,
         resumedRun: null,
+        resumedTask: null,
       };
+
+      // Sprint 79: a background task suspended on this question resumes from
+      // its saved transcript (D-79.10). Unlike a pipeline resume this is a
+      // re-enqueue, not a synchronous call — the task picks up wherever the
+      // queue has room, which is the whole point of it being in the background.
+      const agentTaskId = outcome.question.agentTaskId;
+      if (parsed.data.action === "answer" && parsed.data.resume && agentTaskId) {
+        if (await requeueAgentTask(db, agentTaskId)) {
+          const task = await getAgentTask(db, request.params.id, agentTaskId);
+          if (task) result.resumedTask = { id: task.id, status: task.status };
+        }
+      }
 
       const pipelineRunId = outcome.question.pipelineRunId;
       if (parsed.data.action === "answer" && parsed.data.resume && pipelineRunId) {

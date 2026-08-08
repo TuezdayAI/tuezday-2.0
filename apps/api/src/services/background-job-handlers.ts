@@ -30,6 +30,7 @@ import {
   listAdAccounts,
   syncAdAccount,
 } from "./ads";
+import { runAgentTask } from "./agent-task-executor";
 import { runAutomationWithLease } from "./automation";
 import type { BackgroundJobClaim } from "./background-jobs";
 import { fillActiveCadences } from "./cadences";
@@ -149,8 +150,12 @@ export function createBackgroundJobHandlersFromOperations(
   operations: BackgroundJobOperations,
   launchGenerate: BackgroundJobHandler =
     unavailableBackgroundJobHandlers().launch_generate,
+  agentTask: BackgroundJobHandler = unavailableBackgroundJobHandlers().agent_task,
 ): BackgroundJobHandlers {
-  const handlers = { launch_generate: launchGenerate } as BackgroundJobHandlers;
+  const handlers = {
+    launch_generate: launchGenerate,
+    agent_task: agentTask,
+  } as BackgroundJobHandlers;
   for (const kind of BACKGROUND_RECURRING_JOB_KINDS) {
     handlers[kind] = async (payload, context) => ({
       status: "complete",
@@ -280,6 +285,7 @@ async function synthesizeWorkspaceLearning(
 export function createBackgroundJobHandlers(
   deps: BackgroundJobHandlerDependencies,
   launchGenerate?: BackgroundJobHandler,
+  agentTask?: BackgroundJobHandler,
 ): BackgroundJobHandlers {
   const operations: BackgroundJobOperations = {
     discovery: async (workspaceId, context) =>
@@ -396,5 +402,40 @@ export function createBackgroundJobHandlers(
         }
       : { status: "dead_letter", error: result.error };
   });
-  return createBackgroundJobHandlersFromOperations(operations, launchGenerateHandler);
+  /**
+   * Sprint 79. Note the outcome mapping: an agent task NEVER retries
+   * (D-79.9), so every path here is `complete` from the queue's point of view
+   * — including a failed run. The task row carries the real outcome, the
+   * founder reads it there, and the queue is not the place to re-decide it.
+   * A throw would be a structural fault and is left to dead-letter.
+   */
+  const agentTaskHandler: BackgroundJobHandler = agentTask ?? (async (payload, context) => {
+    if (payload.kind !== "agent_task") {
+      return { status: "dead_letter", error: "invalid_agent_task_payload" };
+    }
+    const outcome = await runAgentTask(
+      deps.db,
+      {
+        llm: deps.llm,
+        evidence: deps.evidence,
+        safeFetch: deps.safeFetch,
+        ...(deps.questions ? { questions: deps.questions } : {}),
+      },
+      payload.workspaceId,
+      payload.taskId,
+      { signal: context.signal, heartbeat: context.heartbeat },
+    );
+    return outcome.status === "resolved"
+      ? {
+          status: "complete",
+          result: { taskId: payload.taskId, taskStatus: outcome.task.status },
+        }
+      : { status: "complete", result: { taskId: payload.taskId, skipped: outcome.reason } };
+  });
+
+  return createBackgroundJobHandlersFromOperations(
+    operations,
+    launchGenerateHandler,
+    agentTaskHandler,
+  );
 }

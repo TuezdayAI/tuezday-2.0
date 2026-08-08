@@ -12,9 +12,11 @@ import {
 } from "drizzle-orm";
 import {
   BACKGROUND_JOB_KINDS,
+  backgroundJobLaneFor,
   backgroundJobPayloadSchema,
   backgroundJobStatusSchema,
   type BackgroundJobKind,
+  type BackgroundJobLane,
   type BackgroundJobPayload,
   type BackgroundJobStatus,
 } from "@tuezday/contracts";
@@ -52,7 +54,16 @@ export interface ClaimBackgroundJobsInput {
   owner: string;
   leaseMs: number;
   limit: number;
+  /** Concurrent maintenance jobs one workspace may hold. */
   perWorkspaceLimit: number;
+  /**
+   * Sprint 79 (D-79.2): the same budget for the `agent` lane, counted
+   * separately. A fifteen-minute agent task must not hold the workspace's only
+   * dispatch slot while its publish and discovery ticks queue behind it.
+   * Omitted, agent jobs share the maintenance budget — the pre-Sprint-79
+   * behaviour.
+   */
+  perWorkspaceAgentLimit?: number;
 }
 
 export interface BackgroundJobListInput {
@@ -218,10 +229,20 @@ export async function claimBackgroundJobs(
   input: ClaimBackgroundJobsInput,
 ): Promise<BackgroundJobClaim[]> {
   validateClaimInput(input);
+  // Sprint 79: the per-workspace budget is per LANE. `laneKey` is what makes
+  // that a seven-line change rather than a second claim path — a workspace
+  // with no agent tasks counts and claims exactly as it did before.
+  const limitForLane = (lane: BackgroundJobLane): number =>
+    lane === "agent"
+      ? input.perWorkspaceAgentLimit ?? input.perWorkspaceLimit
+      : input.perWorkspaceLimit;
+  const laneKey = (workspaceId: string, kind: string): string =>
+    `${workspaceId}:${backgroundJobLaneFor(kind as BackgroundJobKind)}`;
+
   return await db.transaction(async (tx) => {
     const now = await databaseNowMs(tx);
     const liveRows = await tx
-      .select({ workspaceId: backgroundJobs.workspaceId })
+      .select({ workspaceId: backgroundJobs.workspaceId, kind: backgroundJobs.kind })
       .from(backgroundJobs)
       .where(
         and(
@@ -231,7 +252,8 @@ export async function claimBackgroundJobs(
       );
     const liveCounts = new Map<string, number>();
     for (const row of liveRows) {
-      liveCounts.set(row.workspaceId, (liveCounts.get(row.workspaceId) ?? 0) + 1);
+      const key = laneKey(row.workspaceId, row.kind);
+      liveCounts.set(key, (liveCounts.get(key) ?? 0) + 1);
     }
 
     const candidates = await tx
@@ -266,33 +288,43 @@ export async function claimBackgroundJobs(
     const lastDispatched = new Map(
       dispatchRows.map((row) => [row.workspaceId, row.lastDispatchedAt]),
     );
+    // One queue per (workspace, lane). Fairness across workspaces is unchanged
+    // — `lastDispatched` is still keyed on the workspace — but a workspace's
+    // agent work and its maintenance work now hold separate slots.
     const queues = new Map<string, BackgroundJobRow[]>();
+    const laneOwner = new Map<string, { workspaceId: string; lane: BackgroundJobLane }>();
     for (const candidate of candidates) {
-      const queue = queues.get(candidate.workspaceId) ?? [];
+      const key = laneKey(candidate.workspaceId, candidate.kind);
+      const queue = queues.get(key) ?? [];
       queue.push(candidate);
-      queues.set(candidate.workspaceId, queue);
+      queues.set(key, queue);
+      laneOwner.set(key, {
+        workspaceId: candidate.workspaceId,
+        lane: backgroundJobLaneFor(candidate.kind as BackgroundJobKind),
+      });
     }
 
     const claims: BackgroundJobClaim[] = [];
     while (claims.length < input.limit) {
       const eligible = [...queues.keys()]
         .filter(
-          (workspaceId) =>
-            (queues.get(workspaceId)?.length ?? 0) > 0 &&
-            (liveCounts.get(workspaceId) ?? 0) < input.perWorkspaceLimit,
+          (key) =>
+            (queues.get(key)?.length ?? 0) > 0 &&
+            (liveCounts.get(key) ?? 0) < limitForLane(laneOwner.get(key)!.lane),
         )
         .sort((left, right) => {
-          const leftAt = lastDispatched.get(left) ?? Number.MIN_SAFE_INTEGER;
-          const rightAt = lastDispatched.get(right) ?? Number.MIN_SAFE_INTEGER;
+          const leftAt = lastDispatched.get(laneOwner.get(left)!.workspaceId) ?? Number.MIN_SAFE_INTEGER;
+          const rightAt = lastDispatched.get(laneOwner.get(right)!.workspaceId) ?? Number.MIN_SAFE_INTEGER;
           return leftAt - rightAt || left.localeCompare(right);
         });
       if (eligible.length === 0) break;
 
       let claimedThisPass = false;
-      for (const workspaceId of eligible) {
+      for (const key of eligible) {
         if (claims.length >= input.limit) break;
-        if ((liveCounts.get(workspaceId) ?? 0) >= input.perWorkspaceLimit) continue;
-        const queue = queues.get(workspaceId)!;
+        const { workspaceId, lane } = laneOwner.get(key)!;
+        if ((liveCounts.get(key) ?? 0) >= limitForLane(lane)) continue;
+        const queue = queues.get(key)!;
         let claimed: BackgroundJobClaim | null = null;
         while (queue.length > 0 && !claimed) {
           const candidate = queue.shift()!;
@@ -343,7 +375,7 @@ export async function claimBackgroundJobs(
             set: { lastDispatchedAt: now, updatedAt: now },
           });
         lastDispatched.set(workspaceId, now);
-        liveCounts.set(workspaceId, (liveCounts.get(workspaceId) ?? 0) + 1);
+        liveCounts.set(key, (liveCounts.get(key) ?? 0) + 1);
         claims.push(claimed);
         claimedThisPass = true;
       }
@@ -545,12 +577,18 @@ export async function listBackgroundJobs(
 
 export async function getBackgroundQueueStats(
   db: Db,
-  options: { perWorkspaceConcurrency?: number } = {},
+  options: { perWorkspaceConcurrency?: number; perWorkspaceAgentConcurrency?: number } = {},
 ): Promise<BackgroundQueueStats> {
   const now = await databaseNowMs(db);
   const perWorkspaceConcurrency = integerInRange(
     options.perWorkspaceConcurrency ?? 1,
     "perWorkspaceConcurrency",
+    1,
+    100,
+  );
+  const perWorkspaceAgentConcurrency = integerInRange(
+    options.perWorkspaceAgentConcurrency ?? perWorkspaceConcurrency,
+    "perWorkspaceAgentConcurrency",
     1,
     100,
   );
@@ -583,15 +621,27 @@ export async function getBackgroundQueueStats(
     FROM background_jobs
   `);
   const aggregate = aggregateRows[0];
+  // Saturation is per (workspace, lane) since Sprint 79 — a workspace running
+  // its one allowed agent task is not "saturated" for maintenance work, and an
+  // operator gauge that said otherwise would send someone looking for a
+  // backlog that is not there. The lane rule is restated in SQL rather than
+  // imported; `background_jobs_lane_matches_contract` in the queue suite is
+  // what keeps the two honest.
   const { rows: saturationRows } = await db.execute<{ count: number }>(sql`
     SELECT COUNT(*) AS count
     FROM (
-      SELECT workspace_id
+      SELECT
+        workspace_id,
+        (kind = 'agent_task') AS is_agent,
+        COUNT(*) AS running
       FROM background_jobs
       WHERE status = 'running'
-      GROUP BY workspace_id
-      HAVING COUNT(*) >= ${perWorkspaceConcurrency}
-    ) AS saturated
+      GROUP BY workspace_id, (kind = 'agent_task')
+    ) AS lanes
+    WHERE running >= CASE
+      WHEN is_agent THEN ${perWorkspaceAgentConcurrency}::bigint
+      ELSE ${perWorkspaceConcurrency}::bigint
+    END
   `);
   const saturation = saturationRows[0];
   const byKind = Object.fromEntries(

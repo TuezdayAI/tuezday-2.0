@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BACKGROUND_JOB_KINDS,
+  BACKGROUND_RECURRING_JOB_KINDS,
   backgroundJobPayloadSchema,
   backgroundJobStatusSchema,
 } from "../src";
@@ -26,10 +27,13 @@ describe("background job contracts", () => {
       "sequence",
       "evidence",
       "launch_generate",
+      // Sprint 79. Appended rather than slotted in: the order is stable and
+      // operator dashboards read it positionally.
+      "agent_task",
     ]);
   });
 
-  it.each(BACKGROUND_JOB_KINDS.filter((kind) => kind !== "launch_generate"))(
+  it.each(BACKGROUND_RECURRING_JOB_KINDS)(
     "accepts the tenant-bound %s payload and rejects extra fields",
     (kind) => {
       expect(
@@ -44,6 +48,29 @@ describe("background job contracts", () => {
       ).toThrow();
     },
   );
+
+  it("binds an agent task payload to its task, and rejects anything else", () => {
+    const TASK_ID = "44444444-4444-4444-8444-444444444444";
+    expect(
+      backgroundJobPayloadSchema.parse({
+        kind: "agent_task",
+        workspaceId: WORKSPACE_ID,
+        taskId: TASK_ID,
+      }),
+    ).toEqual({ kind: "agent_task", workspaceId: WORKSPACE_ID, taskId: TASK_ID });
+    // No task id means no work to do — the queue must not accept it.
+    expect(() =>
+      backgroundJobPayloadSchema.parse({ kind: "agent_task", workspaceId: WORKSPACE_ID }),
+    ).toThrow();
+    expect(() =>
+      backgroundJobPayloadSchema.parse({
+        kind: "agent_task",
+        workspaceId: WORKSPACE_ID,
+        taskId: TASK_ID,
+        request: "attacker supplied",
+      }),
+    ).toThrow();
+  });
 
   it("preserves launch generation input and human attribution", () => {
     expect(

@@ -2608,6 +2608,10 @@ export const chatMessages = pgTable(
     // works for chat with no new tracing code. No FK — an agent_runs row can be
     // pruned by retention without orphaning the transcript that referenced it.
     agentRunId: text("agent_run_id"),
+    // Sprint 79: set on the acknowledgement message a detach writes, so
+    // reopening the thread later still finds the task and can re-attach its
+    // live panel. No FK, for the same retention reason as agent_run_id.
+    agentTaskId: text("agent_task_id"),
     costCents: doublePrecision("cost_cents").notNull().default(0),
     inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
     outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
@@ -2631,9 +2635,14 @@ export const chatProposals = pgTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    // Nullable since Sprint 79: a background task with no originating thread
+    // still proposes, and its card renders in the task panel instead.
+    sessionId: text("session_id").references(() => chatSessions.id, {
+      onDelete: "cascade",
+    }),
+    /** Sprint 79. No FK — a proposal outlives the task that made it, exactly
+     * as it already outlives the draft it proposed. */
+    agentTaskId: text("agent_task_id"),
     // Set once the turn's assistant message exists; the proposal is recorded
     // mid-run, before there is a message to hang it under.
     messageId: text("message_id"),
@@ -2662,6 +2671,7 @@ export const chatProposals = pgTable(
     index("chat_proposals_session_created").on(t.sessionId, t.createdAt),
     // The per-day cap's read path.
     index("chat_proposals_workspace_created").on(t.workspaceId, t.createdAt),
+    index("chat_proposals_task_created").on(t.agentTaskId, t.createdAt),
   ],
 );
 
@@ -3398,6 +3408,10 @@ export const agentRuns = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     task: text("task").notNull(), // short label, e.g. "proof" / "pipeline:research"
     createdBy: text("created_by").notNull(), // actor attribution label
+    // Sprint 79: set on a delegated worker's run. Self-referencing and
+    // nullable; no cascade, because a swept parent must not take its children's
+    // traces with it — the child's distilled report is what the parent kept.
+    parentRunId: text("parent_run_id"),
     status: text("status").notNull(), // AGENT_RUN_STATUSES
     stopReason: text("stop_reason"), // AGENT_STOP_REASONS, set iff done
     error: text("error"),
@@ -3414,7 +3428,10 @@ export const agentRuns = pgTable(
     startedAt: bigint("started_at", { mode: "number" }).notNull(),
     finishedAt: bigint("finished_at", { mode: "number" }),
   },
-  (t) => [index("agent_runs_workspace_started").on(t.workspaceId, t.startedAt)],
+  (t) => [
+    index("agent_runs_workspace_started").on(t.workspaceId, t.startedAt),
+    index("agent_runs_parent").on(t.parentRunId),
+  ],
 );
 
 export type AgentRunRow = typeof agentRuns.$inferSelect;
@@ -4026,6 +4043,10 @@ export const agentQuestions = pgTable(
       onDelete: "set null",
     }),
     stepKey: text("step_key"),
+    /** Sprint 79: the background task this question suspended. The second
+     * resume point beside `pipeline_run_id` — answering either re-queues the
+     * work that stopped. No FK, so a swept task never blocks the question. */
+    agentTaskId: text("agent_task_id"),
     type: text("type").notNull(),
     question: text("question").notNull(),
     why: text("why").notNull(),
@@ -4046,7 +4067,99 @@ export const agentQuestions = pgTable(
     index("agent_questions_workspace_status").on(t.workspaceId, t.status, t.createdAt),
     index("agent_questions_pipeline_run").on(t.pipelineRunId),
     index("agent_questions_run").on(t.agentRunId),
+    index("agent_questions_task").on(t.agentTaskId),
   ],
 );
 
 export type AgentQuestionRow = typeof agentQuestions.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Background agents (Sprint 79, PRD §10 Move 9c)
+//
+// An `agent_run` is a TRACE: no queue, no cancel, no resume, no owner, and
+// subject to retention. A detached unit of work needs an identity that
+// outlives any single run — a task that asks a question and resumes is two
+// runs, and a task that is steered is still one thing the founder is watching
+// (D-79.1). Hence this table, with `agent_run_id` pointing at the CURRENT run.
+// ---------------------------------------------------------------------------
+
+export const agentTasks = pgTable(
+  "agent_tasks",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** The thread it was detached from. Null for an API-created task: it still
+     * runs, it just has nowhere to post its answer back to. */
+    sessionId: text("session_id").references(() => chatSessions.id, {
+      onDelete: "set null",
+    }),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    createdBy: text("created_by").notNull(),
+    request: text("request").notNull(),
+    title: text("title").notNull().default(""),
+    status: text("status").notNull().default("queued"), // AGENT_TASK_STATUSES
+    /** No FK, for the same retention reason as chat_messages.agent_run_id. */
+    agentRunId: text("agent_run_id"),
+    jobId: text("job_id"),
+    /** The working transcript carried across a suspend/resume (D-79.10):
+     * AgentMessage[], bounded, oldest tool results dropped first. */
+    transcriptJson: text("transcript_json"),
+    outputText: text("output_text"),
+    stopReason: text("stop_reason"), // AGENT_STOP_REASONS
+    error: text("error"),
+    stepCount: bigint("step_count", { mode: "number" }).notNull().default(0),
+    subagentCount: bigint("subagent_count", { mode: "number" }).notNull().default(0),
+    steerCount: bigint("steer_count", { mode: "number" }).notNull().default(0),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    cachedTokens: bigint("cached_tokens", { mode: "number" }).notNull().default(0),
+    costCents: doublePrecision("cost_cents").notNull().default(0),
+    /** Set by the cancel route; read by the executor at each step boundary. */
+    cancelRequestedAt: bigint("cancel_requested_at", { mode: "number" }),
+    /** Cleared from the inbox once a human has looked at the result. */
+    acknowledgedAt: bigint("acknowledged_at", { mode: "number" }),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    startedAt: bigint("started_at", { mode: "number" }),
+    finishedAt: bigint("finished_at", { mode: "number" }),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [
+    index("agent_tasks_workspace_created").on(t.workspaceId, t.createdAt),
+    // The concurrency-cap read path and the inbox projection's read path.
+    index("agent_tasks_workspace_status").on(t.workspaceId, t.status, t.createdAt),
+    index("agent_tasks_session_created").on(t.sessionId, t.createdAt),
+  ],
+);
+
+export type AgentTaskRow = typeof agentTasks.$inferSelect;
+
+/**
+ * Steering (D-79.7). A message arriving mid-generation cannot be applied to
+ * that generation, so the executor drains unconsumed rows at each step
+ * boundary and records which step consumed them. The row is the durable
+ * queue between a founder typing and a run noticing.
+ */
+export const agentTaskMessages = pgTable(
+  "agent_task_messages",
+  {
+    /** Insertion order; breaks same-millisecond ties (replaces SQLite rowid). */
+    seq: bigserial("seq", { mode: "number" }),
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => agentTasks.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("steer"),
+    content: text("content").notNull(),
+    consumedAt: bigint("consumed_at", { mode: "number" }),
+    consumedAtStep: bigint("consumed_at_step", { mode: "number" }),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("agent_task_messages_task_created").on(t.taskId, t.createdAt)],
+);
+
+export type AgentTaskMessageRow = typeof agentTaskMessages.$inferSelect;

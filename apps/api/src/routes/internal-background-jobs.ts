@@ -60,6 +60,7 @@ export function registerInternalBackgroundJobRoutes(
   app.get("/internal/background-jobs/stats", async () =>
     await getBackgroundQueueStats(deps.db, {
       perWorkspaceConcurrency: deps.policy.perWorkspaceConcurrency,
+      perWorkspaceAgentConcurrency: deps.policy.perWorkspaceAgentConcurrency,
     }),
   );
 

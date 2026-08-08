@@ -182,6 +182,7 @@ export async function runBackgroundJobTick(
         leaseMs: deps.policy.leaseMs,
         limit: deps.policy.batchSize,
         perWorkspaceLimit: deps.policy.perWorkspaceConcurrency,
+        perWorkspaceAgentLimit: deps.policy.perWorkspaceAgentConcurrency,
       });
       return { reconciled, admitted: admission.admitted, claims };
     },

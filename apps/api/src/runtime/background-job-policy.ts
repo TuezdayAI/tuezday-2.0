@@ -1,9 +1,15 @@
-import type { BackgroundRecurringJobKind } from "@tuezday/contracts";
+import {
+  AGENT_TASKS_PER_WORKSPACE,
+  type BackgroundRecurringJobKind,
+} from "@tuezday/contracts";
 
 export interface BackgroundJobPolicy {
   pollMs: number;
   batchSize: number;
   perWorkspaceConcurrency: number;
+  /** Sprint 79 (D-79.2): the `agent` lane's own per-workspace budget, so a
+   * long agent task cannot starve a workspace's recurring ticks. */
+  perWorkspaceAgentConcurrency: number;
   leaseMs: number;
   heartbeatMs: number;
   maxAttempts: number;
@@ -57,6 +63,13 @@ export function parseBackgroundJobPolicy(
       env,
       "BACKGROUND_JOB_PER_WORKSPACE",
       1,
+      1,
+      100,
+    ),
+    perWorkspaceAgentConcurrency: integer(
+      env,
+      "BACKGROUND_JOB_PER_WORKSPACE_AGENT",
+      AGENT_TASKS_PER_WORKSPACE,
       1,
       100,
     ),

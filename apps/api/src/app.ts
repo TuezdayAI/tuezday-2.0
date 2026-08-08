@@ -33,6 +33,7 @@ import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
 import { registerAgentRunRoutes } from "./routes/agent-runs";
+import { registerAgentTaskRoutes } from "./routes/agent-tasks";
 import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerAutomationRoutes } from "./routes/automation";
@@ -358,6 +359,7 @@ export async function buildApp({
   registerSignalRoutes(app, db, llm, evidence);
   registerChatRoutes(app, db, llm, evidence, guardedFetch, agentProposals);
   registerAgentRunRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
+  registerAgentTaskRoutes(app, db);
   registerDiscoveryRoutes(
     app,
     db,

@@ -14,6 +14,11 @@ export interface AskQuestionOrigin {
   agentRunId: string;
   /** Null for a one-shot run: there is nothing to resume, only to record. */
   pipelineRunId: string | null;
+  /** Sprint 79: set when the asking run IS a background task. Like
+   * `pipelineRunId`, its presence is what makes the question resumable — and
+   * it is also what scopes the re-ask check across a suspend/resume, since the
+   * agent run id changes on every resume and the task id does not. */
+  agentTaskId?: string | null;
   stepKey: string | null;
 }
 

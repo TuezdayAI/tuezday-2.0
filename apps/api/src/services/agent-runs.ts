@@ -43,12 +43,13 @@ function parseMessages(value: string): AgentMessage[] {
   });
 }
 
-function rowToSummary(row: AgentRunRow): AgentRunSummary {
+export function rowToSummary(row: AgentRunRow): AgentRunSummary {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     task: row.task,
     createdBy: row.createdBy,
+    parentRunId: row.parentRunId,
     status: row.status as AgentRunSummary["status"],
     stopReason: row.stopReason as AgentRunSummary["stopReason"],
     error: row.error,
@@ -66,7 +67,7 @@ function rowToSummary(row: AgentRunRow): AgentRunSummary {
   };
 }
 
-function rowToStep(row: AgentRunStepRow): AgentRunStep {
+export function rowToStep(row: AgentRunStepRow): AgentRunStep {
   return {
     id: row.id,
     stepIndex: row.stepIndex,

@@ -55,6 +55,19 @@ export async function assertLlmBudget(db: Db, workspaceId: string): Promise<void
   await assertWithinLimit(db, workspaceId, "monthlyLlmCents", (await getUsage(db, workspaceId)).monthlyLlmCents);
 }
 
+/**
+ * What is left of the rolling LLM budget, in cents. `Infinity` when the plan
+ * is unlimited or billing is not enforced. Sprint 79 uses it to warn before
+ * starting a background run whose worst case would breach the cap (D-79.3) —
+ * a warning, not a refusal: `assertLlmBudget` is what refuses.
+ */
+export async function remainingLlmBudgetCents(db: Db, workspaceId: string): Promise<number> {
+  if (!billingEnforced()) return Number.POSITIVE_INFINITY;
+  const limit = (await getEntitlements(db, workspaceId)).monthlyLlmCents;
+  if (limit === -1) return Number.POSITIVE_INFINITY;
+  return Math.max(0, limit - (await getUsage(db, workspaceId)).monthlyLlmCents);
+}
+
 /** Soft check for worker paths: over-budget work is skipped and left pending
  * (the queue is the pending state), never failed mid-run. */
 export async function llmBudgetExhausted(db: Db, workspaceId: string): Promise<boolean> {

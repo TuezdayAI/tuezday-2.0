@@ -1,5 +1,6 @@
 import type { AnyTool } from "../registry";
 import { askFounderTool } from "./ask";
+import { delegateTool } from "./delegate";
 import { findInstructiveRejectionsTool } from "./find-instructive-rejections";
 import { findSimilarApprovedDraftsTool } from "./find-similar-approved-drafts";
 import { getBrainSectionTool } from "./get-brain-section";
@@ -74,7 +75,15 @@ export const PROPOSE_TOOLS: readonly AnyTool[] = [
 
 export const ASK_TOOLS: readonly AnyTool[] = [askFounderTool];
 
-export const ALL_TOOLS: readonly AnyTool[] = [...READ_TOOLS, ...PROPOSE_TOOLS, ...ASK_TOOLS];
+/** Sprint 79 — offered to a background orchestrator and to nothing else. */
+export const DELEGATE_TOOLS: readonly AnyTool[] = [delegateTool];
+
+export const ALL_TOOLS: readonly AnyTool[] = [
+  ...READ_TOOLS,
+  ...PROPOSE_TOOLS,
+  ...ASK_TOOLS,
+  ...DELEGATE_TOOLS,
+];
 
 const TOOLS_BY_NAME = new Map<string, AnyTool>(ALL_TOOLS.map((tool) => [tool.name, tool]));
 

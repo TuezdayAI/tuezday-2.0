@@ -129,6 +129,7 @@ describe("chat schemas", () => {
       citations: [{ kind: "data" as const, ref: "publication:abc", label: "Launch post" }],
       cards: [],
       agentRunId: "44444444-4444-4444-8444-444444444444",
+      agentTaskId: null,
       costCents: 0.2,
       inputTokens: 900,
       outputTokens: 120,

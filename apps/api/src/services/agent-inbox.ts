@@ -18,10 +18,13 @@ import {
   type AgentQuestion,
   type PriorityItem,
   type PriorityQueue,
+  type AgentTask,
   type SetupChecklistItem,
+  type WorkflowStatus,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { listAgentQuestions } from "./agent-questions";
+import { listUnacknowledgedAgentTasks } from "./agent-tasks";
 import { getNextActionState } from "./next-action";
 import { collectPriorityItems } from "./priorities";
 
@@ -38,7 +41,8 @@ const MAX_LIMIT = 100;
  * 2 — an overdue authorization.
  * 3 — a failure that is not yet overdue.
  * 4 — an authorization waiting.
- * 5 — risks and reviews that stop the machine getting better, not stop it working.
+ * 5 — risks and reviews that stop the machine getting better, not stop it
+ *     working, and a finished background task nobody has read yet.
  * 6 — ordinary content review.
  * 7 — untargeted triage and setup steps.
  */
@@ -57,6 +61,10 @@ function inboxTier(item: AgentInboxItem, now: number): number {
     item.kind === "connection_health" ||
     item.kind === "campaign_risk" ||
     item.kind === "learning_review" ||
+    // Sprint 79: the founder asked for this and walked away. It is not blocked
+    // work, so it sits below the authorizations — but they are waiting on it,
+    // so it sits above the review queue they can get to whenever.
+    item.kind === "agent_task_result" ||
     (item.kind === "signal_triage" && item.campaignId !== null)
   ) {
     return 5;
@@ -195,6 +203,49 @@ async function setupItems(
   return items;
 }
 
+/**
+ * Sprint 79 (D-79.11): a finished background task, as a feed item. A
+ * projection over `agent_tasks`, exactly like every other item here — the
+ * "unread" state is the task's own `acknowledged_at`, so opening it in the
+ * drawer clears it from the inbox without a second table to keep in step.
+ */
+export function agentTaskItem(workspaceId: string, task: AgentTask): AgentInboxItem {
+  const status: WorkflowStatus =
+    task.status === "succeeded" ? "completed" : task.status === "failed" ? "failed" : "archived";
+  const reason =
+    task.status === "succeeded"
+      ? "It finished and wrote an answer."
+      : task.status === "cancelled"
+        ? "You stopped it. Whatever it had done is in the trace."
+        : `It stopped early${task.error ? `: ${task.error}` : "."}`;
+  return {
+    id: task.id,
+    lane: "notify",
+    kind: "agent_task_result",
+    status,
+    title: task.title || task.request.slice(0, 80),
+    reason,
+    // A task that proposed something is the case worth flagging: the proposals
+    // are sitting unconfirmed and nothing happens until somebody looks.
+    consequence:
+      task.status === "succeeded"
+        ? "Nothing it proposed has happened yet — it still needs you to confirm."
+        : "Nothing was published, sent or spent.",
+    // The Inspector, not the drawer: the copilot is a drawer with no URL of
+    // its own, and the trace is where the whole run — its answer, its workers,
+    // what it proposed — is actually readable. A task that never got as far as
+    // a run falls back to the inbox it is already sitting in.
+    href: task.agentRunId
+      ? `/workspaces/${workspaceId}/inspector?run=${task.agentRunId}`
+      : `/workspaces/${workspaceId}/inbox`,
+    campaignId: null,
+    campaignName: null,
+    dueAt: null,
+    createdAt: task.finishedAt ?? task.createdAt,
+    question: null,
+  };
+}
+
 export interface InboxFeedOptions {
   limit?: number;
   now?: number;
@@ -215,6 +266,9 @@ export async function buildAgentInboxFeed(
     ...(await collectPriorityItems(db, workspaceId, now)).map(laned),
     ...(await listAgentQuestions(db, workspaceId, { status: "open" })).map((question) =>
       questionItem(workspaceId, question),
+    ),
+    ...(await listUnacknowledgedAgentTasks(db, workspaceId)).map((task) =>
+      agentTaskItem(workspaceId, task),
     ),
     ...(await setupItems(db, workspaceId, now)),
   ];

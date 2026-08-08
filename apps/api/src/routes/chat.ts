@@ -34,6 +34,7 @@ import {
 import { runChatTurn } from "../services/chat-turn";
 import { EntitlementError, assertLlmBudget } from "../services/entitlements";
 import { getWorkspace } from "../services/workspaces";
+import { openStream, wantsStream } from "./sse";
 
 async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = await getWorkspace(db, id);
@@ -44,48 +45,6 @@ async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 }
 
 const DEFAULT_TITLE = "";
-
-/** Keeps an idle stream alive through a long tool call. */
-const HEARTBEAT_MS = 15_000;
-
-function wantsStream(request: FastifyRequest): boolean {
-  return (request.headers.accept ?? "").includes("text/event-stream");
-}
-
-/**
- * The platform's first SSE endpoint (Sprint 76). Fastify's reply is hijacked
- * so frames can be written as they happen; the route stays a thin adapter over
- * `runChatTurn`, which is the testable unit and takes the same `onEvent`
- * callback whether or not anyone is streaming (D-76.10).
- */
-function openStream(reply: FastifyReply): {
-  send: (event: ChatStreamEvent) => void;
-  close: () => void;
-} {
-  reply.hijack();
-  reply.raw.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    // Proxies that buffer defeat the entire point of streaming.
-    "X-Accel-Buffering": "no",
-  });
-  const heartbeat = setInterval(() => {
-    if (!reply.raw.writableEnded) reply.raw.write(":\n\n");
-  }, HEARTBEAT_MS);
-  heartbeat.unref?.();
-
-  return {
-    send(event) {
-      if (reply.raw.writableEnded) return;
-      reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-    },
-    close() {
-      clearInterval(heartbeat);
-      if (!reply.raw.writableEnded) reply.raw.end();
-    },
-  };
-}
 
 export function registerChatRoutes(
   app: FastifyInstance,
@@ -239,7 +198,7 @@ export function registerChatRoutes(
         return reply.status(201).send(result);
       }
 
-      const stream = openStream(reply);
+      const stream = openStream<ChatStreamEvent>(reply);
       try {
         await runChatTurn(
           db,

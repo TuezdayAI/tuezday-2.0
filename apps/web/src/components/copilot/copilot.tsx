@@ -20,7 +20,11 @@ import Link from "next/link";
 import {
   CHAT_COMMANDS,
   parseChatCommand,
+  agentTaskStreamEventSchema,
   type AgentStopReason,
+  type AgentTask,
+  type AgentTaskCreated,
+  type AgentTaskDetail,
   type ChatCard,
   type ChatCitation,
   type ChatCitationKind,
@@ -48,6 +52,20 @@ import {
 } from "@/lib/chat-card-view";
 import { describeDiff, diffWords, hasChanges } from "@/lib/text-diff";
 import { readChatStream } from "@/lib/chat-stream";
+import { readSseStream } from "@/lib/sse-stream";
+import {
+  applyTaskEvent,
+  blockingQuestion,
+  budgetWarningText,
+  shouldStream,
+  steersRemaining,
+  subagentRows,
+  taskActivity,
+  taskControls,
+  taskStatusDetail,
+  taskStatusLabel,
+  taskTone,
+} from "@/lib/agent-task-view";
 import {
   isActionable,
   mergeProposal,
@@ -130,9 +148,14 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [draft, setDraft] = useState("");
   const [live, setLive] = useState<LiveTurn>(EMPTY_TURN);
   const [notice, setNotice] = useState<string | null>(null);
+  // Sprint 79: work this thread detached. `tasks` is the list; `openTask` is
+  // the one whose live panel is showing.
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const base = `/workspaces/${workspaceId}/chat`;
+  const taskBase = `/workspaces/${workspaceId}/agent-tasks`;
 
   const loadSession = useCallback(
     async (sessionId: string) => {
@@ -155,6 +178,24 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       }
     },
     [base],
+  );
+
+  /** The background tasks this thread has detached, newest first. */
+  const loadTasks = useCallback(
+    async (sessionId: string) => {
+      try {
+        const res = await apiFetch(`${taskBase}?sessionId=${encodeURIComponent(sessionId)}`);
+        if (!res.ok) return;
+        const list: AgentTask[] = await res.json();
+        setTasks(list);
+        // Re-open the panel on whatever is still going, so reloading the page
+        // mid-run does not lose sight of it.
+        setOpenTaskId((current) => current ?? list.find((t) => shouldStream(t))?.id ?? null);
+      } catch {
+        // A tasks endpoint that is not there yet must not break the thread.
+      }
+    },
+    [taskBase],
   );
 
   const loadSessions = useCallback(async () => {
@@ -188,13 +229,18 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
 
   // Load the active thread's transcript when it changes.
   useEffect(() => {
-    if (open && activeId) void loadSession(activeId);
+    if (open && activeId) {
+      void loadSession(activeId);
+      void loadTasks(activeId);
+    }
     if (!activeId) {
       setMessages([]);
       setProposals([]);
       setPins([]);
+      setTasks([]);
+      setOpenTaskId(null);
     }
-  }, [open, activeId, loadSession]);
+  }, [open, activeId, loadSession, loadTasks]);
 
   // Close on Escape.
   useEffect(() => {
@@ -558,9 +604,66 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
   }
 
+  /**
+   * Move the composer's request to the background (D-79.3). Explicitly a
+   * button: the model never decides that a request is long-running, because a
+   * founder who did not ask for a background run should never get one.
+   */
+  async function detach(text: string) {
+    const message = text.trim();
+    if (!message || pending) return;
+
+    let sessionId = activeId;
+    if (!sessionId) {
+      sessionId = await createSession();
+      if (!sessionId) return;
+    }
+
+    setDraft("");
+    setNotice(null);
+    setPending(true);
+    try {
+      const res = await apiFetch(`${base}/sessions/${sessionId}/detach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (res.status === 404) {
+        setUnavailable(true);
+        return;
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        setNotice(
+          body.message ?? "Couldn't start that in the background. Try sending it here instead.",
+        );
+        setDraft(message);
+        return;
+      }
+      const created: AgentTaskCreated = await res.json();
+      setMessages((prev) => [
+        ...prev,
+        ...(created.userMessage ? [created.userMessage] : []),
+        ...(created.message ? [created.message] : []),
+      ]);
+      setTasks((prev) => [created.task, ...prev]);
+      setOpenTaskId(created.task.id);
+      // The budget warning is shown, not enforced — they pressed the button
+      // and the run is allowed; they just deserve to know what it could cost.
+      setNotice(budgetWarningText(created.budgetWarning));
+      void loadSessions();
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+      setDraft(message);
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (!open) return null;
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
+  const openTask = tasks.find((t) => t.id === openTaskId) ?? null;
   const budget = activeSession ? threadBudgetView(activeSession) : null;
   const shown = filterVisible(messages);
 
@@ -880,6 +983,23 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               </div>
             )}
 
+            {openTask && (
+              <TaskPanel
+                key={openTask.id}
+                workspaceId={workspaceId}
+                task={openTask}
+                onChanged={(next) => {
+                  setTasks((prev) => prev.map((t) => (t.id === next.id ? next : t)));
+                }}
+                onFinished={() => {
+                  // The answer is posted back into the thread, so a finished
+                  // task's result belongs in the transcript, not in a panel.
+                  if (activeId) void loadSession(activeId);
+                }}
+                onDismiss={() => setOpenTaskId(null)}
+              />
+            )}
+
             <form
               className={styles.composer}
               onSubmit={(e) => {
@@ -918,6 +1038,17 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                   }
                 }}
               />
+              <IconButton
+                label="Run this in the background"
+                // Explicit: a bare <button> inside a <form> submits it, which
+                // would send the message AND detach it.
+                type="button"
+                className={styles.iconBtn}
+                disabled={pending || !draft.trim() || budget?.exhausted}
+                onClick={() => void detach(draft)}
+              >
+                <Icon name="status-generating" size="compact" />
+              </IconButton>
               <Button
                 type="submit"
                 variant="primary"
@@ -932,6 +1063,228 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       </aside>
     </div>
   );
+}
+
+/**
+ * The live view of one background task (Sprint 79).
+ *
+ * Progress arrives over SSE, which is polled from the database server-side
+ * (D-79.12) — so this reconnects rather than assuming one socket lasts the
+ * fifteen minutes a task may run. Every frame is folded through
+ * `applyTaskEvent`, which is where the "arrives twice" cases are handled.
+ */
+function TaskPanel({
+  workspaceId,
+  task,
+  onChanged,
+  onFinished,
+  onDismiss,
+}: {
+  workspaceId: string;
+  task: AgentTask;
+  onChanged: (task: AgentTask) => void;
+  onFinished: () => void;
+  onDismiss: () => void;
+}) {
+  const [detail, setDetail] = useState<AgentTaskDetail | null>(null);
+  const [steer, setSteer] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const path = `/workspaces/${workspaceId}/agent-tasks/${task.id}`;
+
+  // One effect owns the whole stream lifecycle. `cancelled` guards every
+  // setState after an unmount — a fifteen-minute stream long outlives a
+  // founder's patience for keeping the drawer open.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function follow() {
+      try {
+        const res = await apiFetch(`${path}/stream`, {
+          headers: { Accept: "text/event-stream" },
+        });
+        if (!res.ok) return;
+        if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+          // A proxy stripped the stream. The same URL answers with the detail.
+          const snapshot: AgentTaskDetail = await res.json();
+          if (!cancelled) setDetail(snapshot);
+          return;
+        }
+        await readSseStream(res, agentTaskStreamEventSchema, (event) => {
+          if (cancelled) return;
+          setDetail((prev) => applyTaskEvent(prev ?? { ...task, steps: [], subagents: [], messages: [], questions: [], proposals: [] }, event));
+        });
+      } catch {
+        if (!cancelled) setNote("Lost the live view. The task is still running — reopen to reconnect.");
+      }
+    }
+
+    void follow();
+    return () => {
+      cancelled = true;
+    };
+  }, [path, task.id]);
+
+  const current: AgentTask = detail ?? task;
+  const controls = taskControls(current);
+  const question = detail ? blockingQuestion(detail) : null;
+  const rows = detail ? taskActivity(detail.steps) : [];
+  const workers = detail ? subagentRows(detail.subagents, detail.steps) : [];
+
+  // Push status changes back up so the thread list and the panel agree.
+  const statusRef = useRef(current.status);
+  useEffect(() => {
+    if (statusRef.current === current.status) return;
+    statusRef.current = current.status;
+    onChanged(current);
+    if (current.status === "succeeded" || current.status === "failed" || current.status === "cancelled") {
+      onFinished();
+    }
+  }, [current, onChanged, onFinished]);
+
+  async function post(action: "steer" | "cancel", body?: unknown) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await apiFetch(`${path}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
+        setNote(payload.message ?? "That didn't go through.");
+        return false;
+      }
+      if (action === "cancel") {
+        const next: AgentTask = await res.json();
+        setDetail((prev) => (prev ? { ...prev, ...next } : prev));
+        onChanged(next);
+      }
+      return true;
+    } catch {
+      setNote("Couldn't reach the assistant.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={`${styles.taskPanel} ${styles[`taskPanel${capitalize(taskTone(current))}`] ?? ""}`}>
+      <header className={styles.taskHead}>
+        <Icon
+          name={taskTone(current) === "running" ? "status-generating" : "brain"}
+          size="compact"
+        />
+        <span className={styles.taskStatus}>{taskStatusLabel(current)}</span>
+        <span className={styles.taskSpacer} />
+        {current.agentRunId && (
+          <Link className={styles.taskTrace} href={agentRunHref(workspaceId, current.agentRunId)}>
+            Trace
+          </Link>
+        )}
+        <IconButton label="Hide this panel" size="compact" className={styles.iconBtn} onClick={onDismiss}>
+          <Icon name="close" size="compact" />
+        </IconButton>
+      </header>
+
+      <p className={styles.taskTitle}>{current.title || current.request}</p>
+      <p className={styles.taskDetail}>{taskStatusDetail(current)}</p>
+      {note && <p className={styles.taskNote}>{note}</p>}
+
+      {question && (
+        <p className={styles.taskNote}>
+          It asked: “{question.question}” — answer it in your inbox and it picks up from there.
+        </p>
+      )}
+
+      {workers.length > 0 && (
+        <ul className={styles.taskWorkers}>
+          {workers.map((worker) => (
+            <li key={worker.id} className={styles.taskWorker}>
+              <Icon
+                name={worker.running ? "status-generating" : worker.ok ? "approve" : "reject"}
+                size="compact"
+              />
+              <span className={styles.taskWorkerLabel}>{worker.label}</span>
+              {worker.summary && <span className={styles.taskWorkerSummary}>{worker.summary}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {rows.length > 0 && (
+        <>
+          <button
+            type="button"
+            className={styles.taskToggle}
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
+            {expanded ? "Hide what it did" : `What it did (${rows.length})`}
+          </button>
+          {expanded && (
+            <ul className={styles.taskActivity}>
+              {rows.map((row) => (
+                <li key={row.id} className={styles.taskActivityRow}>
+                  <Icon name={row.ok ? "approve" : "reject"} size="compact" />
+                  {row.label}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      {controls.canSteer ? (
+        <form
+          className={styles.taskSteer}
+          onSubmit={(e) => {
+            e.preventDefault();
+            const message = steer.trim();
+            if (!message) return;
+            void post("steer", { message }).then((ok) => {
+              if (ok) setSteer("");
+            });
+          }}
+        >
+          <Textarea
+            className={styles.composerField}
+            placeholder="Redirect it — it picks this up at its next step"
+            value={steer}
+            rows={1}
+            disabled={busy}
+            onChange={(e) => setSteer(e.target.value)}
+          />
+          <Button type="submit" variant="secondary" loading={busy} disabled={!steer.trim()}>
+            Steer
+          </Button>
+        </form>
+      ) : (
+        controls.steerDisabledReason &&
+        !controls.canRetry && <p className={styles.taskNote}>{controls.steerDisabledReason}</p>
+      )}
+
+      <div className={styles.taskActions}>
+        {controls.canSteer && (
+          <span className={styles.taskHint}>
+            {steersRemaining(current)} redirect{steersRemaining(current) === 1 ? "" : "s"} left
+          </span>
+        )}
+        {controls.canCancel && (
+          <Button variant="tertiary" loading={busy} onClick={() => void post("cancel")}>
+            Stop it
+          </Button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 /**
@@ -1221,6 +1574,7 @@ function bubble(
     citations: [],
     cards: [],
     agentRunId: null,
+    agentTaskId: null,
     costCents: 0,
     inputTokens: 0,
     outputTokens: 0,

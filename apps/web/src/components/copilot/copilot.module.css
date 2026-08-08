@@ -642,3 +642,108 @@
   text-transform: uppercase;
   color: var(--muted);
 }
+
+/* Background task panel (Sprint 79) — a detached run, watched live.
+   Sits between the transcript and the composer: the thread stays usable
+   while it runs, which is the whole point of detaching. */
+.taskPanel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  border-left: 2px solid var(--muted);
+  padding: 10px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel-2);
+}
+.taskPanelRunning { border-left-color: var(--accent, var(--text)); }
+.taskPanelBlocked { border-left-color: var(--warn, var(--muted)); }
+.taskPanelFailed { border-left-color: var(--danger, var(--muted)); }
+
+.taskHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.taskPanelRunning .taskHead svg { animation: spin 1.4s linear infinite; }
+.taskStatus {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.taskSpacer { flex: 1; }
+.taskTrace {
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.taskTrace:hover { color: var(--text); text-decoration: underline; }
+
+.taskTitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.taskDetail,
+.taskNote,
+.taskHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.taskWorkers {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 6px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.taskWorker {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+.taskWorkerLabel { color: var(--text); text-transform: capitalize; }
+.taskWorkerSummary { color: var(--muted); }
+
+.taskToggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: underline;
+}
+.taskActivity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.taskActivityRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.taskSteer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 4px;
+}
+.taskActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

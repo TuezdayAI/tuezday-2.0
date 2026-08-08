@@ -39,6 +39,9 @@ export const askFounderTool: Tool<AskInput, unknown> = {
         workspaceId: ctx.workspaceId,
         agentRunId: ctx.agentRunId,
         pipelineRunId: ctx.pipelineRunId ?? null,
+        // Sprint 79: a background task is the other thing a question can
+        // suspend, and answering re-queues it.
+        agentTaskId: ctx.agentTaskId ?? null,
         stepKey: ctx.stepKey ?? null,
       },
       args,

@@ -5900,14 +5900,35 @@ export const BACKGROUND_JOB_KINDS = [
   "sequence",
   "evidence",
   "launch_generate",
+  /** Sprint 79: one detached agent task. Event-driven like `launch_generate`,
+   * but long-running, which is why it claims through its own lane. */
+  "agent_task",
 ] as const;
 export type BackgroundJobKind = (typeof BACKGROUND_JOB_KINDS)[number];
 
+/** Kinds driven by an event rather than by a schedule — no interval, never
+ * reconciled into `background_schedules`. */
+export const BACKGROUND_EVENT_JOB_KINDS = ["launch_generate", "agent_task"] as const;
+export type BackgroundEventJobKind = (typeof BACKGROUND_EVENT_JOB_KINDS)[number];
+
 export const BACKGROUND_RECURRING_JOB_KINDS = BACKGROUND_JOB_KINDS.filter(
-  (kind) => kind !== "launch_generate",
-) as readonly Exclude<BackgroundJobKind, "launch_generate">[];
+  (kind): kind is Exclude<BackgroundJobKind, BackgroundEventJobKind> =>
+    !(BACKGROUND_EVENT_JOB_KINDS as readonly string[]).includes(kind),
+);
 export type BackgroundRecurringJobKind =
   (typeof BACKGROUND_RECURRING_JOB_KINDS)[number];
+
+/**
+ * Sprint 79 (D-79.2): which per-workspace concurrency budget a kind claims
+ * against. A fifteen-minute agent task must not hold the workspace's only
+ * dispatch slot while its publish and discovery ticks queue behind it.
+ */
+export const BACKGROUND_JOB_LANES = ["maintenance", "agent"] as const;
+export type BackgroundJobLane = (typeof BACKGROUND_JOB_LANES)[number];
+
+export function backgroundJobLaneFor(kind: BackgroundJobKind): BackgroundJobLane {
+  return kind === "agent_task" ? "agent" : "maintenance";
+}
 
 export const BACKGROUND_JOB_STATUSES = [
   "queued",
@@ -5956,9 +5977,21 @@ const launchGenerationBackgroundJobPayloadSchema = z
   })
   .strict();
 
+/** Sprint 79. The payload is an id and nothing else: everything the executor
+ * needs is on `agent_tasks`, which stays authoritative while the job is
+ * queued — a steer or a cancel that arrived before the claim must be seen. */
+const agentTaskBackgroundJobPayloadSchema = z
+  .object({
+    kind: z.literal("agent_task"),
+    workspaceId: z.string().uuid(),
+    taskId: z.string().uuid(),
+  })
+  .strict();
+
 export const backgroundJobPayloadSchema = z.union([
   recurringBackgroundJobPayloadSchema,
   launchGenerationBackgroundJobPayloadSchema,
+  agentTaskBackgroundJobPayloadSchema,
 ]);
 export type BackgroundJobPayload = z.infer<
   typeof backgroundJobPayloadSchema
@@ -7705,6 +7738,10 @@ export const AGENT_STOP_REASONS = [
   "timeout",
   "needs_human",
   "error",
+  /** Sprint 79 (D-79.8): a human stopped it. Distinct from `error` because
+   * nothing went wrong, and distinct from a bound because nobody was waiting
+   * for one to trip. */
+  "cancelled",
 ] as const;
 export type AgentStopReason = (typeof AGENT_STOP_REASONS)[number];
 
@@ -7718,7 +7755,10 @@ export const AGENT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
 export type AgentMessageRole = (typeof AGENT_MESSAGE_ROLES)[number];
 
 /** Persisted step kinds: one model invocation, or one tool dispatch. */
-export const AGENT_STEP_KINDS = ["model_call", "tool_call"] as const;
+/** Sprint 79 adds `steer`: a human interrupted the run and their words were
+ * injected at this step boundary (D-79.7). It is a step rather than a side
+ * log so the Inspector shows the interruption where it actually happened. */
+export const AGENT_STEP_KINDS = ["model_call", "tool_call", "steer"] as const;
 export type AgentStepKind = (typeof AGENT_STEP_KINDS)[number];
 
 /** A tool invocation requested by the model. Ids are minted by the gateway
@@ -7824,16 +7864,43 @@ export const PROPOSE_TOOL_NAMES = [
  */
 export const ASK_TOOL_NAMES = ["ask_founder"] as const;
 
+/**
+ * The Sprint 79 delegation surface. `access: "read"` is the honest tier — it
+ * changes nothing outside the trace — but it is kept out of `READ_TOOL_NAMES`
+ * on purpose, because array membership is what decides who is offered it. A
+ * chat turn is bounded at 120 seconds and a worker at 180, so a delegating
+ * chat turn would time out by construction. Only a background task gets this.
+ */
+export const DELEGATE_TOOL_NAMES = ["delegate"] as const;
+
+/**
+ * The four workers an orchestrator may delegate to (Sprint 79, D-79.6). A
+ * fixed catalogue rather than free-form "spawn an agent that does X": four
+ * named roles are inspectable, individually tunable, and enough for the
+ * acceptance test, where an open prompt surface inside a governance sprint is
+ * not. Declared here rather than with the rest of the Sprint 79 vocabulary
+ * because `toolInputSchemas` below needs it.
+ */
+export const SUBAGENT_ROLES = [
+  "research",
+  "competitor_scan",
+  "variant_generation",
+  "metrics_review",
+] as const;
+export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
+
 /** The whole registry. Tests assert registry and contracts stay in lockstep. */
 export const AGENT_TOOL_NAMES = [
   ...READ_TOOL_NAMES,
   ...PROPOSE_TOOL_NAMES,
   ...ASK_TOOL_NAMES,
+  ...DELEGATE_TOOL_NAMES,
 ] as const;
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 export type ReadToolName = (typeof READ_TOOL_NAMES)[number];
 export type ProposeToolName = (typeof PROPOSE_TOOL_NAMES)[number];
 export type AskToolName = (typeof ASK_TOOL_NAMES)[number];
+export type DelegateToolName = (typeof DELEGATE_TOOL_NAMES)[number];
 
 export function isProposeToolName(name: string): name is ProposeToolName {
   return (PROPOSE_TOOL_NAMES as readonly string[]).includes(name);
@@ -8071,6 +8138,21 @@ export const toolInputSchemas = {
     why: z.string().trim().min(1).max(QUESTION_WHY_MAX_CHARS),
     options: z.array(z.string().trim().min(1).max(80)).min(2).max(4).optional(),
   }),
+
+  // -------------------------------------------------------------------------
+  // Delegation (Sprint 79). `objective` is the whole brief the worker gets —
+  // it does not see the orchestrator's transcript, which is the point: a
+  // worker that inherited the parent context would defeat the context economy
+  // the delegation exists to buy.
+  // -------------------------------------------------------------------------
+  delegate: z.object({
+    role: z.enum(SUBAGENT_ROLES),
+    objective: z.string().trim().min(1).max(1_000),
+    /** Optional narrowing the worker is told to hold to — a competitor name,
+     * a channel, a campaign id. Kept separate from `objective` so the
+     * orchestrator cannot bury a scope change inside prose. */
+    focus: z.string().trim().max(300).optional(),
+  }),
 } as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
 
 // ---------------------------------------------------------------------------
@@ -8260,6 +8342,9 @@ export const chatMessageSchema = z.object({
   cards: z.array(chatCardSchema).default([]),
   /** The agent_run behind this assistant turn — the Agent Inspector link. */
   agentRunId: z.string().uuid().nullable(),
+  /** Sprint 79: the background task this message announced, when the founder
+   * detached the request. The drawer re-attaches its live panel from here. */
+  agentTaskId: z.string().uuid().nullable(),
   /** Per-turn metering, shown inline. */
   costCents: z.number(),
   inputTokens: z.number().int(),
@@ -8509,7 +8594,11 @@ export type ChatProposalIntent = z.infer<typeof chatProposalIntentSchema>;
 export const chatProposalSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
-  sessionId: z.string().uuid(),
+  /** Null when the proposal came from a background task with no thread
+   * behind it (Sprint 79) — the card then renders in the task panel. */
+  sessionId: z.string().uuid().nullable(),
+  /** Sprint 79: the background task that proposed it, when one did. */
+  agentTaskId: z.string().uuid().nullable(),
   /** The assistant message this card renders under. */
   messageId: z.string().uuid().nullable(),
   /** The run that asked — the Inspector link, and the attribution the minted
@@ -8714,6 +8803,10 @@ export const agentQuestionSchema = z
     agentRunId: z.string().uuid(),
     /** Null when nothing is suspended — a one-shot run has no resume point. */
     pipelineRunId: z.string().uuid().nullable(),
+    /** Sprint 79: the background task suspended on this question. Answering it
+     * re-queues the task, which is the second resume path — a pipeline run and
+     * an agent task suspend on the same row and resume in different ways. */
+    agentTaskId: z.string().uuid().nullable(),
     stepKey: z.string().nullable(),
     type: z.enum(AGENT_QUESTION_TYPES),
     question: z.string().trim().min(1).max(QUESTION_TEXT_MAX_CHARS),
@@ -8769,6 +8862,9 @@ export const AGENT_INBOX_ITEM_KINDS = [
   "agent_question",
   /** An unmet setup checklist item, folded in from the next-action engine. */
   "setup_task",
+  /** Sprint 79 (D-79.11): a background agent task finished and nobody has
+   * looked at it yet. Projected from `agent_tasks`, not stored. */
+  "agent_task_result",
 ] as const;
 export type AgentInboxItemKind = (typeof AGENT_INBOX_ITEM_KINDS)[number];
 
@@ -8786,6 +8882,9 @@ const AGENT_INBOX_LANE_BY_KIND: Record<AgentInboxItemKind, AgentInboxLane> = {
   connection_health: "notify",
   campaign_risk: "notify",
   setup_task: "notify",
+  // The task finishing is a statement of fact. Anything it *decided* is
+  // already an `authorization` or `content_review` item in its own right.
+  agent_task_result: "notify",
 };
 
 /** Total over the kinds, so the API and the UI can never lane an item differently. */
@@ -8841,6 +8940,9 @@ export const agentRunSummarySchema = z.object({
   workspaceId: z.string().min(1),
   task: z.string(),
   createdBy: z.string(),
+  /** Sprint 79: set on a subagent run, so the Inspector can render the workers
+   * a background task delegated to as children of the run that spawned them. */
+  parentRunId: z.string().nullable(),
   status: z.enum(AGENT_RUN_STATUSES),
   stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
   error: z.string().nullable(),
@@ -8889,6 +8991,233 @@ export const proofAgentRunInputSchema = z.object({
   question: z.string().min(1).max(2000),
 });
 export type ProofAgentRunInput = z.infer<typeof proofAgentRunInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Background agents & delegation (Sprint 79, PRD §10 Move 9c)
+//
+// A chat turn is bounded at 8 steps / 32k tokens / 120s because a founder
+// staring at a spinner will not wait longer. The work they actually want —
+// "research our top three competitors and draft a positioning post" — is
+// minutes of work across dozens of tool calls. An AGENT TASK is that work
+// given an identity that outlives the request: durable, queued, watchable,
+// steerable, and stoppable.
+//
+// The invariant (§0.2 of the spec): this is the same runner, the same
+// registry, the same propose gate and the same approval queue. Nothing here
+// adds a capability or a safety mechanism — it adds lifecycle.
+// ---------------------------------------------------------------------------
+
+export const AGENT_TASK_STATUSES = [
+  "queued",
+  "running",
+  /** Suspended on an `ask_founder` question. Answering it re-queues the task. */
+  "awaiting_answer",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type AgentTaskStatus = (typeof AGENT_TASK_STATUSES)[number];
+
+export const AGENT_TASK_TERMINAL_STATUSES = [
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+
+export function isAgentTaskTerminal(status: AgentTaskStatus): boolean {
+  return (AGENT_TASK_TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Per-task bounds. Deliberately an order of magnitude above CHAT_TURN_BOUNDS:
+ * the whole point is work that does not fit in a turn. The worst case is
+ * arithmetic rather than a guess — see AGENT_TASK_MAX_COST_CENTS.
+ */
+export const AGENT_TASK_BOUNDS = {
+  maxSteps: 40,
+  maxTokens: 400_000,
+  timeoutMs: 900_000,
+} as const;
+
+/** Bounds for one delegated worker (D-79.5). Small on purpose: a subagent
+ * that needs forty steps is a task, not a worker. */
+export const SUBAGENT_BOUNDS = {
+  maxSteps: 8,
+  maxTokens: 60_000,
+  timeoutMs: 180_000,
+} as const;
+
+/** Concurrent (non-terminal) tasks one workspace may hold. */
+export const AGENT_TASKS_PER_WORKSPACE = 2;
+
+/** Delegations one task may make, and steers one task may receive. */
+export const AGENT_TASK_SUBAGENTS_PER_TASK = 4;
+export const AGENT_TASK_STEERS_PER_TASK = 10;
+
+export const AGENT_TASK_REQUEST_MAX_CHARS = 4_000;
+export const AGENT_TASK_STEER_MAX_CHARS = 2_000;
+
+/** Bound on the working transcript carried across a suspend/resume (D-79.10). */
+export const AGENT_TASK_TRANSCRIPT_MAX_CHARS = 120_000;
+
+/**
+ * The number the pre-flight budget warning uses (D-79.3). Not a limit — the
+ * Sprint 59 workspace budget is the limit — but the honest worst case a
+ * founder is agreeing to when they press Detach, at frontier-tier rates.
+ */
+export const AGENT_TASK_MAX_COST_CENTS = 400;
+
+/**
+ * What a worker hands back (D-79.5). Enforced as the run's `responseSchema`,
+ * so distillation is a property of the mechanism rather than a request in a
+ * prompt. The worker's full trace is not lost — it is an `agent_run` with
+ * `parent_run_id` set, and the Inspector renders it.
+ */
+export const subagentFindingSchema = z
+  .object({
+    claim: z.string().trim().min(1).max(400),
+    /** A `<kind>:<id>` anchor or a URL, where the worker had one. */
+    source: z.string().trim().max(300).nullable().default(null),
+  })
+  .strict();
+export type SubagentFinding = z.infer<typeof subagentFindingSchema>;
+
+export const subagentReportSchema = z
+  .object({
+    summary: z.string().trim().min(1).max(1_200),
+    findings: z.array(subagentFindingSchema).max(8).default([]),
+    confidence: z.enum(["high", "medium", "low"]),
+    /** What it could not establish. The orchestrator needs the holes, not
+     * just the fill — otherwise it reports a gap as a fact. */
+    gaps: z.array(z.string().trim().min(1).max(300)).max(5).default([]),
+  })
+  .strict();
+export type SubagentReport = z.infer<typeof subagentReportSchema>;
+
+export const agentTaskMessageSchema = z.object({
+  id: z.string().min(1),
+  taskId: z.string().min(1),
+  role: z.literal("steer"),
+  content: z.string(),
+  /** Null until the executor drained it at a step boundary (D-79.7). */
+  consumedAt: z.number().int().nullable(),
+  consumedAtStep: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type AgentTaskMessage = z.infer<typeof agentTaskMessageSchema>;
+
+export const agentTaskSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: z.string().min(1),
+  /** The thread this was detached from, if any. A task created from the API
+   * without a thread still runs; it just has nowhere to post back to. */
+  sessionId: z.string().nullable(),
+  userId: z.string().nullable(),
+  createdBy: z.string(),
+  request: z.string(),
+  title: z.string(),
+  status: z.enum(AGENT_TASK_STATUSES),
+  /** The CURRENT run. A task that suspended and resumed has had several; the
+   * Inspector reaches the earlier ones through the task detail. */
+  agentRunId: z.string().nullable(),
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  error: z.string().nullable(),
+  output: z.string().nullable(),
+  stepCount: z.number().int().min(0),
+  subagentCount: z.number().int().min(0),
+  steerCount: z.number().int().min(0),
+  usage: agentUsageSchema,
+  cancelRequestedAt: z.number().int().nullable(),
+  acknowledgedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  startedAt: z.number().int().nullable(),
+  finishedAt: z.number().int().nullable(),
+});
+export type AgentTask = z.infer<typeof agentTaskSchema>;
+
+export const agentTaskDetailSchema = agentTaskSchema.extend({
+  steps: z.array(agentRunStepSchema),
+  /** Delegated workers, newest last, as summaries — the parent's own steps
+   * already carry each one's distilled report. */
+  subagents: z.array(agentRunSummarySchema),
+  messages: z.array(agentTaskMessageSchema),
+  questions: z.array(agentQuestionSchema),
+  proposals: z.array(chatProposalSchema),
+});
+export type AgentTaskDetail = z.infer<typeof agentTaskDetailSchema>;
+
+export const createAgentTaskInputSchema = z
+  .object({
+    request: z.string().trim().min(1).max(AGENT_TASK_REQUEST_MAX_CHARS),
+    sessionId: z.string().uuid().optional(),
+  })
+  .strict();
+export type CreateAgentTaskInput = z.infer<typeof createAgentTaskInputSchema>;
+
+/** Detach from an open thread (D-79.3). The session comes from the path. */
+export const detachChatRequestInputSchema = z
+  .object({
+    message: z.string().trim().min(1).max(AGENT_TASK_REQUEST_MAX_CHARS),
+  })
+  .strict();
+export type DetachChatRequestInput = z.infer<typeof detachChatRequestInputSchema>;
+
+export const steerAgentTaskInputSchema = z
+  .object({
+    message: z.string().trim().min(1).max(AGENT_TASK_STEER_MAX_CHARS),
+  })
+  .strict();
+export type SteerAgentTaskInput = z.infer<typeof steerAgentTaskInputSchema>;
+
+/**
+ * The pre-flight answer to "can I start this, and should I?" (D-79.3). A
+ * refusal is an HTTP status; this is the thing that is *allowed* but worth
+ * saying out loud first.
+ */
+export const agentTaskBudgetWarningSchema = z.object({
+  remainingCents: z.number(),
+  worstCaseCents: z.number(),
+  message: z.string(),
+});
+export type AgentTaskBudgetWarning = z.infer<typeof agentTaskBudgetWarningSchema>;
+
+export const agentTaskCreatedSchema = z.object({
+  task: agentTaskSchema,
+  /** Present when the worst case would exceed what is left of the monthly
+   * budget. The task still started — the founder pressed the button. */
+  budgetWarning: agentTaskBudgetWarningSchema.nullable(),
+  /** The thread messages the detach wrote, when it came from a thread. */
+  userMessage: chatMessageSchema.nullable(),
+  message: chatMessageSchema.nullable(),
+});
+export type AgentTaskCreated = z.infer<typeof agentTaskCreatedSchema>;
+
+/**
+ * SSE frames from GET .../agent-tasks/:taskId/stream (D-79.12). Polled from
+ * the database rather than pushed from an in-process bus: the API may be
+ * several processes and the executor may be in any of them.
+ */
+export const AGENT_TASK_STREAM_EVENTS = [
+  "status",
+  "step",
+  "subagent",
+  "question",
+  "proposal",
+  "result",
+  "done",
+] as const;
+export type AgentTaskStreamEventKind = (typeof AGENT_TASK_STREAM_EVENTS)[number];
+
+export const agentTaskStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("status"), task: agentTaskSchema }),
+  z.object({ type: z.literal("step"), step: agentRunStepSchema }),
+  z.object({ type: z.literal("subagent"), run: agentRunSummarySchema }),
+  z.object({ type: z.literal("question"), question: agentQuestionSchema }),
+  z.object({ type: z.literal("proposal"), proposal: chatProposalSchema }),
+  z.object({ type: z.literal("result"), task: agentTaskSchema }),
+  z.object({ type: z.literal("done"), status: z.enum(AGENT_TASK_STATUSES) }),
+]);
+export type AgentTaskStreamEvent = z.infer<typeof agentTaskStreamEventSchema>;
 
 // ---------------------------------------------------------------------------
 // Pipeline definitions as data + execution engine (Sprint 64, direction
@@ -10270,6 +10599,15 @@ export const answerAgentQuestionResultSchema = z.object({
     .object({
       id: z.string().uuid(),
       status: z.enum(PIPELINE_RUN_STATUSES),
+    })
+    .nullable(),
+  /** Sprint 79: the same proof for a background task. A question suspends
+   * either a pipeline run or an agent task, never both, so at most one of
+   * these two fields is ever populated. */
+  resumedTask: z
+    .object({
+      id: z.string().uuid(),
+      status: z.enum(AGENT_TASK_STATUSES),
     })
     .nullable(),
 });

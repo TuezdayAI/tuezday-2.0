@@ -25,6 +25,7 @@ function question(overrides: Record<string, unknown> = {}) {
     workspaceId: "22222222-2222-4222-8222-222222222222",
     agentRunId: RUN_ID,
     pipelineRunId: "33333333-3333-4333-8333-333333333333",
+    agentTaskId: null,
     stepKey: "draft",
     type: "missing_permission" as const,
     question: "May we name the investors in the funding-round post?",
@@ -166,6 +167,8 @@ describe("inbox lanes (Sprint 70)", () => {
       ...PRIORITY_ITEM_KINDS,
       "agent_question",
       "setup_task",
+      // Sprint 79: a finished background task, unread.
+      "agent_task_result",
     ]);
   });
 

@@ -8,6 +8,13 @@
       "when": 1786138499495,
       "tag": "0000_sprint_74_postgres_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786210057170,
+      "tag": "0001_sprint_79_background_agents",
+      "breakpoints": true
     }
   ]
 }

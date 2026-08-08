@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { BackgroundJobPayload } from "@tuezday/contracts";
+import type { BackgroundJobPayload, BackgroundRecurringJobKind } from "@tuezday/contracts";
 import type { Db } from "../src/db";
 import { backgroundJobs, workspaces } from "../src/db/schema";
 import {
@@ -23,7 +23,7 @@ const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
 
 function payload(
   workspaceId: string,
-  kind: Exclude<BackgroundJobPayload["kind"], "launch_generate"> = "evidence",
+  kind: BackgroundRecurringJobKind = "evidence",
 ): BackgroundJobPayload {
   return { kind, workspaceId };
 }
@@ -45,7 +45,7 @@ describe("durable background job repository", () => {
     workspaceId: string,
     key: string,
     options: {
-      kind?: Exclude<BackgroundJobPayload["kind"], "launch_generate">;
+      kind?: BackgroundRecurringJobKind;
       availableAt?: number;
       maxAttempts?: number;
       priority?: number;
@@ -130,6 +130,51 @@ describe("durable background job repository", () => {
     expect(new Set(claims.map((claim) => claim.workspaceId))).toEqual(
       new Set([WORKSPACE_A, WORKSPACE_B]),
     );
+  });
+
+  // Sprint 79: agent tasks run for minutes, so they are counted in their own
+  // lane. Without this, one background agent would hold a workspace's single
+  // concurrency slot and its publish and discovery ticks would simply stop.
+  it("counts agent tasks in their own lane, so a long one cannot starve the ticks", async () => {
+    await enqueueBackgroundJob(db, {
+      payload: { kind: "agent_task", workspaceId: WORKSPACE_A, taskId: randomUUID() },
+      idempotencyKey: "agent-1",
+      maxAttempts: 1,
+    });
+    await enqueue(WORKSPACE_A, "tick-1");
+
+    const claims = await claimBackgroundJobs(db, {
+      owner: "worker-a",
+      leaseMs: 30_000,
+      limit: 5,
+      perWorkspaceLimit: 1,
+      perWorkspaceAgentLimit: 1,
+    });
+
+    expect(claims).toHaveLength(2);
+    expect(new Set(claims.map((claim) => claim.kind))).toEqual(
+      new Set(["agent_task", "evidence"]),
+    );
+  });
+
+  it("still caps how many agent tasks one workspace may run at once", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await enqueueBackgroundJob(db, {
+        payload: { kind: "agent_task", workspaceId: WORKSPACE_A, taskId: randomUUID() },
+        idempotencyKey: `agent-${i}`,
+        maxAttempts: 1,
+      });
+    }
+
+    const claims = await claimBackgroundJobs(db, {
+      owner: "worker-a",
+      leaseMs: 30_000,
+      limit: 5,
+      perWorkspaceLimit: 1,
+      perWorkspaceAgentLimit: 2,
+    });
+
+    expect(claims).toHaveLength(2);
   });
 
   it("enforces the per-workspace concurrency cap", async () => {

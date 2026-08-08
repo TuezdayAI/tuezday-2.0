@@ -77,6 +77,7 @@ describe("result cards", () => {
       toolName: null,
       citations: [],
       agentRunId: null,
+      agentTaskId: null,
       costCents: 0,
       inputTokens: 0,
       outputTokens: 0,

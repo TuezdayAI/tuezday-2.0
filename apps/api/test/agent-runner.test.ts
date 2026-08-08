@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { AgentMessage } from "@tuezday/contracts";
@@ -297,6 +298,84 @@ describe("AgentRunner", () => {
     });
 
     await expect(runner.run(baseParams())).rejects.toThrow(/agentStep/);
+  });
+});
+
+// Sprint 79: the runner gained a step boundary, so a long detached run can be
+// heartbeated, redirected and stopped without any of that leaking into the
+// tool loop. All three ride the same hook.
+describe("AgentRunner step boundaries", () => {
+  it("stops with `cancelled` when the signal aborts, keeping the steps it took", async () => {
+    const { db, runner } = await fixture([
+      { toolCalls: [{ name: "lookup", arguments: { q: "alpha" } }] },
+      { text: "Never reached." },
+    ]);
+    const { tool } = lookupTool();
+    const controller = new AbortController();
+
+    const runId = randomUUID();
+    const result = await runner.run(
+      baseParams({
+        runId,
+        tools: [tool],
+        signal: controller.signal,
+        onStepBoundary: ({ modelCalls }) => {
+          // After the first model call and its tool dispatch: the founder
+          // pressed stop while it was mid-run, not before it started.
+          if (modelCalls === 1) controller.abort(new Error("cancelled"));
+          return Promise.resolve({});
+        },
+      }),
+    );
+
+    expect(result.stopReason).toBe("cancelled");
+    const { run, steps } = await runRows(db, runId);
+    expect(run.stopReason).toBe("cancelled");
+    // The partial trace survives: a cancelled run is still a run somebody paid
+    // for, and the founder gets to see what it did before they stopped it.
+    expect(steps.length).toBeGreaterThan(0);
+  });
+
+  it("stops when the hook itself asks to, without needing a signal", async () => {
+    const { runner } = await fixture([{ text: "Never reached." }]);
+    const result = await runner.run(
+      baseParams({ onStepBoundary: () => Promise.resolve({ cancel: true }) }),
+    );
+    expect(result.stopReason).toBe("cancelled");
+  });
+
+  it("injects a message at the boundary and persists it as its own step", async () => {
+    const { db, gateway, runner } = await fixture([{ text: "Understood." }]);
+    const runId = randomUUID();
+    let injected = false;
+
+    const result = await runner.run(
+      baseParams({
+        runId,
+        onStepBoundary: () => {
+          if (injected) return Promise.resolve({});
+          injected = true;
+          return Promise.resolve({
+            inject: [{ role: "user" as const, content: "Change of plan: LinkedIn only." }],
+          });
+        },
+      }),
+    );
+
+    expect(result.stopReason).toBe("complete");
+    // The model saw it on the very next call — that is the whole contract.
+    expect(gateway.calls[0]!.messages.at(-1)?.content).toContain("LinkedIn only");
+    const { steps } = await runRows(db, runId);
+    expect(steps.some((step) => step.kind === "steer")).toBe(true);
+  });
+
+  it("records a subagent run as a child of the run that spawned it", async () => {
+    const { db, runner } = await fixture([{ text: "Report." }]);
+    const parentRunId = randomUUID();
+    const runId = randomUUID();
+    await runner.run(baseParams({ runId, parentRunId }));
+    const { run } = await runRows(db, runId);
+    expect(run.parentRunId).toBe(parentRunId);
   });
 });
 

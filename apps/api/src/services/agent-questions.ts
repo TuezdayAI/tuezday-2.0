@@ -162,12 +162,16 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
   return {
     async ask(origin: AskQuestionOrigin, args: AskQuestionArgs): Promise<AskResult> {
       const fingerprint = questionFingerprint(args.type, args.question);
-      // Scope the memory of what was asked to the pipeline run when there is
-      // one: an agent run ends every time a question suspends it, so scoping to
-      // the agent run would forget the answer on the very resume it exists for.
+      // Scope the memory of what was asked to whatever survives a resume: an
+      // agent run ends every time a question suspends it, so scoping to the
+      // agent run would forget the answer on the very resume it exists for. A
+      // pipeline run and a background task each survive; a one-shot run has
+      // nothing longer-lived than itself.
       const scope = origin.pipelineRunId
         ? eq(agentQuestions.pipelineRunId, origin.pipelineRunId)
-        : eq(agentQuestions.agentRunId, origin.agentRunId);
+        : origin.agentTaskId
+          ? eq(agentQuestions.agentTaskId, origin.agentTaskId)
+          : eq(agentQuestions.agentRunId, origin.agentRunId);
 
       const asked = await db
         .select()
@@ -214,6 +218,7 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
           workspaceId: origin.workspaceId,
           agentRunId: origin.agentRunId,
           pipelineRunId: origin.pipelineRunId,
+          agentTaskId: origin.agentTaskId ?? null,
           stepKey: origin.stepKey,
           type: args.type,
           question: args.question.trim(),

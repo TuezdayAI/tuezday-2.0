@@ -5,6 +5,7 @@ import type { EvidenceStore } from "../evidence/store";
 import type { SafeFetchService } from "../safe-fetch/index";
 import type { AgentProposalService } from "./proposals";
 import type { AgentQuestionService } from "./questions";
+import type { SubagentService } from "./subagents";
 
 // ---------------------------------------------------------------------------
 // Internal tool registry (Sprint 57) — the platform's capability surface for
@@ -66,8 +67,18 @@ export interface ToolContext {
   /** Sprint 70: the ask seam. Absent means `ask_founder` is not offered — a
    * question nobody can answer is worse than no question. */
   questions?: AgentQuestionService;
+  /** Sprint 79: the delegation seam. Absent means `delegate` is not offered,
+   * which is how a worker is prevented from spawning workers (D-79.4). */
+  subagents?: SubagentService;
   /** The run a propose tool attributes its proposal to. Set by the engine. */
   agentRunId?: string;
+  /** Sprint 79: the background task this run belongs to, so a question it
+   * asks knows which task to resume when somebody answers. */
+  agentTaskId?: string;
+  /** The resolved context bundle this run is executing under. Delegation
+   * passes it down so a worker shares the workspace's brain rather than
+   * starting from a blank prompt. */
+  system?: string;
   /** What a question suspends (Sprint 70). Absent for a one-shot run: it
    * records the question but there is no resume point to carry an answer to. */
   pipelineRunId?: string;

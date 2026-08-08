@@ -4,6 +4,7 @@ import {
   AGENT_PROPOSALS_PER_RUN,
   AGENT_TOOL_NAMES,
   ASK_TOOL_NAMES,
+  DELEGATE_TOOL_NAMES,
   EXTERNAL_ACTION_ORIGINS,
   PROPOSAL_RATIONALE_MAX_CHARS,
   PROPOSE_TOOL_NAMES,
@@ -79,6 +80,12 @@ describe("propose-tool contracts (Sprint 69)", () => {
       ...READ_TOOL_NAMES,
       ...PROPOSE_TOOL_NAMES,
       ...ASK_TOOL_NAMES,
+      // Sprint 79. `delegate`'s access tier is `read` — it cannot write — but
+      // it is deliberately outside READ_TOOL_NAMES, because membership of that
+      // array is what decides who is OFFERED a tool, and only a background
+      // task should be. A chat turn that delegated would time out by
+      // construction (120s turn, 180s worker).
+      ...DELEGATE_TOOL_NAMES,
     ]);
     expect(new Set(AGENT_TOOL_NAMES).size).toBe(AGENT_TOOL_NAMES.length);
     for (const name of READ_TOOL_NAMES) expect(isProposeToolName(name)).toBe(false);
@@ -87,6 +94,7 @@ describe("propose-tool contracts (Sprint 69)", () => {
     // `propose` would be counted against the proposal cap and, worse, would
     // read to a founder as something the agent tried to do.
     for (const name of ASK_TOOL_NAMES) expect(isProposeToolName(name)).toBe(false);
+    for (const name of DELEGATE_TOOL_NAMES) expect(isProposeToolName(name)).toBe(false);
   });
 
   it("gives every tool — including the five new ones — an input schema", () => {

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { BACKGROUND_JOB_KINDS, type BackgroundJobKind } from "@tuezday/contracts";
+import {
+  BACKGROUND_JOB_KINDS,
+  type BackgroundJobKind,
+  type BackgroundRecurringJobKind,
+} from "@tuezday/contracts";
 import {
   defineBackgroundJobHandlers,
   unavailableBackgroundJobHandlers,
@@ -46,7 +50,7 @@ describe("background job handler registry", () => {
                 actor: { userId: null, label: "system", human: false },
               }
             : {
-                kind: kind as Exclude<BackgroundJobKind, "launch_generate">,
+                kind: kind as BackgroundRecurringJobKind,
                 workspaceId: "11111111-1111-4111-8111-111111111111",
               },
           expect.anything(),

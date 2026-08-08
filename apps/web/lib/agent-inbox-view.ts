@@ -50,6 +50,7 @@ const KIND_META: Record<AgentInboxItemKind, { label: string; icon: IconName; cta
   campaign_risk: { label: "Campaign risk", icon: "campaign-risk", cta: "Review campaign" },
   agent_question: { label: "The agent is asking", icon: "status-review", cta: "Answer" },
   setup_task: { label: "Setup step", icon: "info", cta: "Finish setup" },
+  agent_task_result: { label: "Background task finished", icon: "info", cta: "Read the result" },
 };
 
 export function inboxItemView(item: AgentInboxItem) {

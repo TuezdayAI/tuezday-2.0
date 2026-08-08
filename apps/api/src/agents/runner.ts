@@ -34,6 +34,19 @@ export interface AgentRunUsage extends AgentStepUsage {
   costCents: number;
 }
 
+/**
+ * What the step-boundary hook may do (Sprint 79). Returning nothing is the
+ * common case; the two powers are injecting a human's mid-flight words before
+ * the next model call, and stopping the run outright.
+ */
+export interface StepBoundaryDecision {
+  /** Appended to the transcript before the next model call, and persisted as
+   * `steer` steps so the interruption is visible where it happened. */
+  inject?: AgentMessage[];
+  /** Stop now. The run ends `cancelled` with its partial trace intact. */
+  cancel?: boolean;
+}
+
 export type AgentRunEvent =
   | { type: "run_start"; runId: string }
   | { type: "step_start"; stepIndex: number }
@@ -51,6 +64,9 @@ export interface AgentRunParams {
   runId?: string;
   /** Short label persisted on the run, e.g. "proof" or "pipeline:research". */
   task: string;
+  /** Sprint 79: the run that delegated this one. Set on a subagent so the
+   * Inspector can render workers as children of the run that spawned them. */
+  parentRunId?: string;
   /** Actor attribution label, e.g. "user:<id>" or "system". */
   createdBy: string;
   system: string;
@@ -66,6 +82,22 @@ export interface AgentRunParams {
   /** Streaming variant: receive deltas, tool dispatch and step boundaries
    * as they happen. Omit for a single awaited result. */
   onEvent?: (event: AgentRunEvent) => void;
+  /**
+   * Sprint 79 (D-79.8): abort the run from outside. An in-flight model call is
+   * aborted with it, so a cancel lands within a step rather than at the next
+   * bound. Everything persisted up to that point stays.
+   */
+  signal?: AbortSignal;
+  /**
+   * Sprint 79: called before each model call. This is where a long-lived
+   * caller renews its lease, drains steering messages, and notices a cancel
+   * request — none of which the runner should know anything about. Awaited, so
+   * a slow hook delays the next step rather than racing it.
+   */
+  onStepBoundary?: (info: {
+    stepIndex: number;
+    modelCalls: number;
+  }) => Promise<StepBoundaryDecision | void>;
 }
 
 export interface AgentRunResult {
@@ -116,6 +148,7 @@ export class AgentRunner {
         workspaceId: params.workspaceId,
         task: params.task,
         createdBy: params.createdBy,
+        parentRunId: params.parentRunId ?? null,
         status: "running",
         model: "",
         provider: "",
@@ -155,6 +188,10 @@ export class AgentRunner {
     };
 
     loop: while (true) {
+      if (params.signal?.aborted) {
+        stopReason = "cancelled";
+        break;
+      }
       if (Date.now() >= deadline) {
         stopReason = "timeout";
         break;
@@ -168,15 +205,35 @@ export class AgentRunner {
         break;
       }
 
+      // Sprint 79: the caller's chance to renew a lease, inject a human's
+      // mid-flight words, or stop. Deliberately before the model call — a
+      // steer applied after this step's tool calls would have the model
+      // reacting to results it was just told to stop caring about (D-79.7).
+      if (params.onStepBoundary) {
+        const decision = (await params.onStepBoundary({ stepIndex, modelCalls })) ?? {};
+        for (const injected of decision.inject ?? []) {
+          messages.push(injected);
+          await persistStep({
+            kind: "steer",
+            messageJson: JSON.stringify(injected),
+          });
+        }
+        if (decision.cancel) {
+          stopReason = "cancelled";
+          break;
+        }
+      }
+
       const modelStepIndex = stepIndex;
       emit({ type: "step_start", stepIndex: modelStepIndex });
 
+      const stepDeadline = deadlineSignal(deadline, params.signal);
       const stepParams: AgentStepParams = {
         system: params.system,
         messages,
         tools: params.tools?.map((t) => t.definition),
         responseSchema: params.responseSchema,
-        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        signal: stepDeadline.signal,
         tier: params.tier,
       };
 
@@ -197,6 +254,12 @@ export class AgentRunner {
           }
         }
       } catch (err) {
+        // Cancellation aborts the same signal a timeout does, so the cause has
+        // to be read from the caller's signal rather than from the error.
+        if (params.signal?.aborted) {
+          stopReason = "cancelled";
+          break;
+        }
         if (Date.now() >= deadline || isTimeoutAbort(err)) {
           stopReason = "timeout";
           break;
@@ -207,6 +270,8 @@ export class AgentRunner {
           break;
         }
         throw err;
+      } finally {
+        stepDeadline.cleanup();
       }
 
       modelCalls += 1;
@@ -301,6 +366,14 @@ export class AgentRunner {
           toolCallId: call.id,
           toolName: call.name,
         });
+
+        // A cancel that arrives during a slow tool should not wait for the
+        // rest of this step's calls to finish (D-79.8). The results already
+        // gathered are persisted; the step is simply cut short.
+        if (params.signal?.aborted) {
+          stopReason = "cancelled";
+          break loop;
+        }
       }
     }
 
@@ -337,4 +410,37 @@ export class AgentRunner {
 
 function isTimeoutAbort(err: unknown): boolean {
   return err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError");
+}
+
+/**
+ * The signal one model call runs under: the run's remaining wall-clock, plus
+ * the caller's cancellation if it supplied one. Hand-rolled rather than
+ * `AbortSignal.any` so the listener is removed when the step ends — a run with
+ * forty steps would otherwise leave forty listeners on a signal that outlives
+ * all of them.
+ */
+function deadlineSignal(
+  deadline: number,
+  external: AbortSignal | undefined,
+): { signal: AbortSignal; cleanup: () => void } {
+  const timeout = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+  if (!external) return { signal: timeout, cleanup: () => {} };
+
+  const controller = new AbortController();
+  const abortFrom = (source: AbortSignal) => {
+    if (!controller.signal.aborted) controller.abort(source.reason);
+  };
+  const onTimeout = () => abortFrom(timeout);
+  const onExternal = () => abortFrom(external);
+  timeout.addEventListener("abort", onTimeout, { once: true });
+  external.addEventListener("abort", onExternal, { once: true });
+  if (external.aborted) abortFrom(external);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      timeout.removeEventListener("abort", onTimeout);
+      external.removeEventListener("abort", onExternal);
+    },
+  };
 }

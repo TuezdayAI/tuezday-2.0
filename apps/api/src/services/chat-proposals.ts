@@ -69,6 +69,7 @@ export function rowToChatProposal(row: ChatProposalRow): ChatProposal {
     id: row.id,
     workspaceId: row.workspaceId,
     sessionId: row.sessionId,
+    agentTaskId: row.agentTaskId,
     messageId: row.messageId,
     agentRunId: row.agentRunId,
     tool: row.tool as ProposeToolName,
@@ -111,12 +112,32 @@ export async function getChatProposal(
   return row ? rowToChatProposal(row) : undefined;
 }
 
+/** Sprint 79: the proposals one background task recorded. Separate read from
+ * the thread one because a task may have no thread, and a thread's cards are
+ * ordered by the message they hang under rather than by the task. */
+export async function listChatProposalsForTask(db: Db, taskId: string): Promise<ChatProposal[]> {
+  return (await db
+    .select()
+    .from(chatProposals)
+    .where(eq(chatProposals.agentTaskId, taskId))
+    .orderBy(asc(chatProposals.createdAt)))
+    .map(rowToChatProposal);
+}
+
 /** Every proposal a thread has ever recorded — the per-thread cap's count. */
 export async function countChatProposalsForThread(db: Db, sessionId: string): Promise<number> {
   return (await db
     .select({ id: chatProposals.id })
     .from(chatProposals)
     .where(eq(chatProposals.sessionId, sessionId))).length;
+}
+
+/** The same cap, counted per task when a background run has no thread. */
+export async function countChatProposalsForTask(db: Db, taskId: string): Promise<number> {
+  return (await db
+    .select({ id: chatProposals.id })
+    .from(chatProposals)
+    .where(eq(chatProposals.agentTaskId, taskId))).length;
 }
 
 /** Chat proposals recorded workspace-wide in the trailing 24 hours. */
@@ -148,7 +169,11 @@ export async function attachProposalsToMessage(db: Db, ids: string[], messageId:
 
 export interface ChatProposalRecorderContext {
   workspaceId: string;
-  sessionId: string;
+  /** Null for a background task with no originating thread (Sprint 79). */
+  sessionId: string | null;
+  /** Set when the recorder is serving a background task. Exactly one of this
+   * and `sessionId` drives the per-conversation cap. */
+  agentTaskId?: string | null;
   /** Decides whether a proposal derives only from untrusted content (D-78.6). */
   taint: TaintTracker;
   /** Called once per recorded proposal — the turn streams it and collects the id. */
@@ -193,7 +218,13 @@ export function createChatProposalRecorder(
    * the model reads the refusal and wraps up.
    */
   async function capped(): Promise<ProposalResult | null> {
-    const thread = await countChatProposalsForThread(db, ctx.sessionId);
+    // One cap, counted against whichever unit of conversation this recorder is
+    // serving: a thread, or a background task that has none.
+    const thread = ctx.sessionId
+      ? await countChatProposalsForThread(db, ctx.sessionId)
+      : ctx.agentTaskId
+        ? await countChatProposalsForTask(db, ctx.agentTaskId)
+        : 0;
     if (thread >= CHAT_PROPOSALS_PER_THREAD) {
       return {
         ok: false,
@@ -229,6 +260,7 @@ export function createChatProposalRecorder(
       id: randomUUID(),
       workspaceId: ctx.workspaceId,
       sessionId: ctx.sessionId,
+      agentTaskId: ctx.agentTaskId ?? null,
       messageId: null,
       agentRunId: origin.agentRunId,
       tool,
@@ -342,7 +374,7 @@ export async function confirmChatProposal(
     agentRunId: existing.agentRunId ?? proposalId,
     workspaceId,
     surface: "chat",
-    chatSessionId: existing.sessionId,
+    ...(existing.sessionId ? { chatSessionId: existing.sessionId } : {}),
     confirmedByUserId: actor.userId,
   };
 
@@ -371,12 +403,16 @@ export async function confirmChatProposal(
   });
 
   // The receipt is a real transcript message, so the next turn's model knows
-  // this happened and does not offer to do it again.
-  await appendMessage(db, workspaceId, existing.sessionId, {
-    role: "assistant",
-    content: `${result.summary} (${describeStatus(result.status)})`,
-    producedRef,
-  });
+  // this happened and does not offer to do it again. A proposal from a
+  // threadless background task has no transcript to write into; the card's own
+  // resolved state is the receipt there.
+  if (existing.sessionId) {
+    await appendMessage(db, workspaceId, existing.sessionId, {
+      role: "assistant",
+      content: `${result.summary} (${describeStatus(result.status)})`,
+      producedRef,
+    });
+  }
 
   return { ok: true, proposal: updated ?? existing };
 }
@@ -421,10 +457,12 @@ async function fail(
     confirmedByUserId: actor.userId,
     resolvedAt: at,
   });
-  await appendMessage(db, existing.workspaceId, existing.sessionId, {
-    role: "assistant",
-    content: `That couldn't go through: ${refusal.message}`,
-  });
+  if (existing.sessionId) {
+    await appendMessage(db, existing.workspaceId, existing.sessionId, {
+      role: "assistant",
+      content: `That couldn't go through: ${refusal.message}`,
+    });
+  }
   return updated ?? existing;
 }
 
