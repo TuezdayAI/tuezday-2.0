@@ -82,7 +82,7 @@ function sufficiencyGateway(
         (m) => m[1]!,
       );
       return {
-        text: JSON.stringify(handler(params.prompt, sourceIds)),
+        text: JSON.stringify(await handler(params.prompt, sourceIds)),
         model: "fake",
         provider: "fake",
         durationMs: 1,

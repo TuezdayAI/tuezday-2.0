@@ -421,14 +421,20 @@ describe("bounded leased discovery scheduler", () => {
     await seedWorkspace(db);
     await seedSource(db, { id: "source-1" });
     const held = deferred<DiscoveryPage>();
+    // Since Sprint 74 every database call is a round trip, so the scheduler
+    // suspends before it reaches the reader. Wait for the first call rather
+    // than assuming the tick got that far synchronously.
+    const entered = deferred<void>();
     let calls = 0;
     const pageReader: DiscoveryPageReader = async ({ target }) => {
       calls += 1;
+      entered.resolve();
       return await held.promise.then((result) => ({ ...result, targetKey: target.key }));
     };
     const deps = dependencies(db, pageReader);
 
     const first = runDiscoveryScheduler(deps, { workspaceId: "workspace-1" });
+    await entered.promise;
     expect(calls).toBe(1);
 
     const overlap = await runDiscoveryScheduler(deps, {
@@ -448,9 +454,11 @@ describe("bounded leased discovery scheduler", () => {
       await seedSource(db, { id: `source-${index}` });
     }
     const firstPage = deferred<DiscoveryPage>();
+    const entered = deferred<void>();
     let calls = 0;
     const pageReader: DiscoveryPageReader = async ({ target }) => {
       calls += 1;
+      entered.resolve();
       if (calls === 1) {
         return await firstPage.promise.then((result) => ({
           ...result,
@@ -463,6 +471,7 @@ describe("bounded leased discovery scheduler", () => {
     const pending = runDiscoveryScheduler(dependencies(db, pageReader), {
       workspaceId: "workspace-1",
     });
+    await entered.promise;
     expect(calls).toBe(1);
     expect(
       (await db
@@ -634,9 +643,11 @@ describe("bounded leased discovery scheduler", () => {
     const db = await createTestDb();
     await seedWorkspace(db);
     await seedSource(db, { id: "slow-source" });
+    const entered = deferred<void>();
     let receivedSignal: AbortSignal | undefined;
     const pageReader: DiscoveryPageReader = ({ signal }) => {
       receivedSignal = signal;
+      entered.resolve();
       return new Promise<DiscoveryPage>((_resolve, reject) => {
         signal.addEventListener("abort", () => reject(signal.reason), {
           once: true,
@@ -657,6 +668,7 @@ describe("bounded leased discovery scheduler", () => {
       }),
       { workspaceId: "workspace-1" },
     );
+    await entered.promise;
     expect(receivedSignal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(10);
 

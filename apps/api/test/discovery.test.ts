@@ -1015,12 +1015,12 @@ interface MatchingHarness {
 async function buildMatchingHarness(fetcher?: SafeFetchService): Promise<MatchingHarness> {
   const db = await createTestDb();
   const scoringPrompts: string[] = [];
-  let responder: (prompt: string) => unknown = () => [];
+  let responder: (prompt: string) => unknown | Promise<unknown> = () => [];
   const llm: LlmGateway = {
     async generate({ prompt }) {
       scoringPrompts.push(prompt);
       return {
-        text: JSON.stringify(responder(prompt)),
+        text: JSON.stringify(await responder(prompt)),
         model: "fake",
         provider: "fake",
         durationMs: 1,

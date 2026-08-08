@@ -76,7 +76,7 @@ function matcherGateway(handler: MatcherHandler): LlmGateway & { calls: number }
           ?.split(", ")
           .filter((id) => id !== "") ?? [];
       return {
-        text: JSON.stringify(handler(params.prompt, campaignIds, occurrenceIds)),
+        text: JSON.stringify(await handler(params.prompt, campaignIds, occurrenceIds)),
         model: "fake",
         provider: "fake",
         durationMs: 1,
