@@ -218,18 +218,49 @@ export async function connectTestDbAgain(db: Db): Promise<Db> {
 }
 
 /**
- * Close and drop every fixture this worker opened. Called from the setup file's
- * afterAll, which runs once per test file.
+ * How many fixtures a file's `beforeAll` created. Everything after this index
+ * belongs to a single test and is dropped when that test ends; everything at or
+ * below it lives for the whole file.
  */
-export async function dropTestDbs(): Promise<void> {
-  const taken = fixtures.splice(0, fixtures.length);
+let pinned: number | undefined;
+
+/**
+ * Called from the setup file's first `beforeEach`, which runs after the file's
+ * `beforeAll` hooks and before any test body.
+ */
+export function pinFileFixtures(): void {
+  pinned ??= fixtures.length;
+}
+
+/**
+ * Close and drop fixtures, keeping the first `keep` of them.
+ *
+ * Dropping per *test* rather than per file is not tidiness — it is the
+ * difference between ~15 live databases and ~140. At 140 the server spends
+ * more time on catalog and autovacuum bookkeeping than on the queries, and the
+ * suite runs an order of magnitude slower than the same tests in isolation.
+ */
+async function dropFixtures(keep: number): Promise<void> {
+  const taken = fixtures.splice(keep, fixtures.length - keep);
   if (taken.length === 0) return;
   await Promise.all(taken.map(({ db }) => closeDb(db)));
   const client = await (admin ??= adminClient());
-  for (const { name } of taken) {
+  // Distinct: connectTestDbAgain registers a second pool onto the same database.
+  for (const name of new Set(taken.map((fixture) => fixture.name))) {
     // FORCE: a test that leaked a connection should not wedge the whole run.
     await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`);
   }
+}
+
+/** Drop the fixtures the test that just finished created. */
+export async function dropTestFixtures(): Promise<void> {
+  await dropFixtures(pinned ?? 0);
+}
+
+/** Drop everything this worker opened, including the file-scoped fixtures. */
+export async function dropTestDbs(): Promise<void> {
+  pinned = undefined;
+  await dropFixtures(0);
 }
 
 /** Close this worker's maintenance connection. */
