@@ -257,8 +257,10 @@ sequence of files that produced it.
 
 - `npm run typecheck` and `npm test` pass against a real Postgres — every one of
   the 332 test files, with no SQLite anywhere in the dependency tree.
-- `better-sqlite3`, `sqlite-vec` and `@types/better-sqlite3` are gone from
-  `apps/api/package.json`.
+- `sqlite-vec` is gone, and `better-sqlite3` / `@types/better-sqlite3` are gone
+  from **runtime** dependencies. *Amended:* they stay as devDependencies,
+  because `db:migrate-to-postgres` (D-74.3) has to read a SQLite file. Nothing
+  under `src/` imports them.
 - `npm run dev` boots the API against Postgres and the app is usable end to end.
 - Evidence retrieval returns the same *shape* of results with the score contract
   in §7.3 intact; the Sprint 47 evidence tests pass unmodified in intent.
@@ -334,3 +336,94 @@ SQLite can no longer host it.
   Per §10a the suite now fails only on transactions: 1,453 failures, every one
   `Transaction function cannot return a promise`, zero of any other kind.
   Next: schema → `pg-core`, driver swap, evidence store, test harness.
+
+- **2026-08-08** — **Stage B complete: the code is on Postgres.**
+
+  *Schema and driver.* `schema.ts` moved to `drizzle-orm/pg-core` (130 tables).
+  The type mapping was forced rather than chosen: Postgres `integer` is int4 and
+  epoch-ms overflows it, so all 425 integer columns became
+  `bigint({mode:"number"})`; SQLite's implicit `rowid` disappeared, so the five
+  tables that used it as a same-millisecond tie-breaker gained an explicit
+  `seq bigserial`; the evidence embedding blob became `vector(768)`. The 82
+  SQLite migrations were replaced by one generated baseline. `createDb` is now
+  async and sets an INT8 type parser — node-postgres returns bigint as a string,
+  which is harmless for an id and silently wrong for a `createdAt` the whole
+  codebase treats as a number.
+
+  *Terminal methods.* pg-core builders have no `.all()`/`.get()`/`.run()`;
+  awaiting the builder runs the query. A codemod stripped 1,994 of them, turning
+  `.get()` into an indexed read at the enclosing await so `T | undefined`
+  survives under `noUncheckedIndexedAccess`. The 39 `.changes` reads route
+  through one `rowsAffected` helper, because node-postgres types `rowCount` as
+  nullable and the two arithmetic call sites would otherwise start doing
+  `number | null` arithmetic.
+
+  *Test harness (D-74.2).* Fixtures are real databases cloned from a template
+  the global setup migrates once. `STRATEGY = FILE_COPY` is what makes this
+  affordable: PG15 defaults to WAL_LOG, which writes the whole 14MB template
+  through WAL at ~250ms a clone, and with ten workers cloning concurrently the
+  queueing showed up as 30s hook timeouts. A directory copy is ~35ms. One suite
+  went from 42.9s to 6.4s.
+
+  *Bug classes Postgres exposed.* Beyond Stage A's five, the first real runs
+  found six more — all of them invisible to the type checker, because awaiting
+  an already-settled value is legal:
+
+  6. `expect(await p).rejects` (138 sites) — awaiting first makes the rejection
+     escape as a thrown error, so the test fails reporting the exact message it
+     was asserting on.
+  7. `const pending = await f()` where the test awaits it again later (18
+     sites). One was production code: `FallbackGateway` awaited the primary
+     provider outside its own try/catch, so a failing primary threw instead of
+     falling through to the secondary — the entire purpose of that class.
+  8. `expect(async () => …).toThrow()` (48 sites) — an async function returns a
+     rejected promise rather than throwing.
+  9. `.filter(async …)` in the launch dispatch path — the predicate returns a
+     Promise, which is always truthy, so **every** message passed the
+     "content has been approved by a human" check.
+  10. Scripted LLM gateways doing `JSON.stringify(responder(prompt))` on a
+      responder the cascade made async: a Promise stringifies to `{}`, which the
+      structured-output schema rejected as "malformed response".
+  11. The per-file setup hook imported `./helpers`, which imports `src/app`. A
+      setup file runs *before* the test file's own imports, so every service it
+      pulled in was already in the module registry when `vi.mock()` tried to
+      replace it — mocks silently did nothing.
+
+  Each has a detector next to its fix in `apps/api/scripts/codemods/`, because
+  "awaiting something already resolved" is the failure mode this migration keeps
+  producing and it never announces itself.
+
+  *Portability fixes.* SQLite's two-argument `MIN`/`MAX` are scalar functions;
+  in Postgres those names are aggregates only, so the story-merge path needs
+  `LEAST`/`GREATEST`. Duplicate-run detection matched `"UNIQUE"` in the error
+  message — SQLite's wording — and now reads SQLSTATE 23505 through
+  `isUniqueViolation`, unwrapping drizzle's `Failed query: …` envelope. And
+  node-postgres emits `error` on idle clients: with no listener that is an
+  unhandled event that kills the process.
+
+  *Schema tests.* The 14 `sprintNN-migrations` tests replayed historical
+  migrations file-by-file, which the squashed baseline leaves without a subject.
+  They are replaced by five schema-invariant suites (42 tests) asserting against
+  the baseline: defaults, partial-unique indexes, check constraints, and which
+  links are `ON DELETE SET NULL` rather than `CASCADE` — the Sprint 67 freeze
+  rule, whose reversal destroys provenance silently. Assertions read SQLSTATE
+  rather than message text, since drizzle's wrapper message would have matched
+  the wrong constraint. **Dropped deliberately:** the
+  backfill-of-pre-existing-rows and drizzle-journal assertions, which describe a
+  history that no longer exists.
+
+  *Two real defects surfaced by the swap, both pre-existing:*
+  - `discovery-matching`'s claim loop spread `undefined` into a malformed claim
+    when its compare-and-swap lost the race. SQLite's `.returning().get()` typed
+    a miss as a row, so a lost race looked like a win.
+  - `launches`' dispatch filter (bug class 9 above) proposed sends for drafts no
+    human had approved.
+
+  *Copy script verified.* A pre-Sprint-74 SQLite database was rebuilt from the
+  retired migrations at `5dbb444`, seeded, and copied. Epoch-ms survives as a
+  number (not the string node-postgres returns for int8), `enabled: 1` becomes
+  `true`, and the embedding blob round-trips to pgvector at cosine distance 0
+  from its original vector. The first attempt caught a real bug: the script
+  skipped every column named `seq`, but `evidence_chunks.seq` is an ordinary
+  integer holding a chunk's position in its document — only *serial* columns
+  may be skipped, so the filter keys on the column type.

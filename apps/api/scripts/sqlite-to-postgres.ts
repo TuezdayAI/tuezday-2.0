@@ -49,9 +49,11 @@ function describeTables(): TableInfo[] {
         .map((fk) => getTableName(fk.reference().foreignTable))
         .filter((name) => name !== getTableName(value)),
       columns: config.columns
-        // `seq` is a bigserial the target assigns; carrying the source value
-        // would collide with the sequence.
-        .filter((column) => column.name !== "seq")
+        // Serial columns are assigned by the target's sequence — carrying the
+        // source value would leave the sequence behind the highest row. Keyed
+        // on the column *type*, not the name: `evidence_chunks.seq` is an
+        // ordinary integer holding a chunk's position in its document.
+        .filter((column) => !/Serial/.test(column.columnType))
         .map((column) => ({
           sqlite: column.name,
           pg: column.name,

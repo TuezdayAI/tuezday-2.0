@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Tuezday — GTM that remembers</title>
+    <script src="assets/vendor/gsap.min.js"></script>
+    <script src="assets/audio-data.js"></script>
+    <style>
+      /* Real Tuezday typefaces, bundled locally (no render-time network) */
+      @font-face {
+        font-family: "Archivo";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("assets/fonts/Archivo.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Inter";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("assets/fonts/Inter.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("assets/fonts/JetBrainsMono.woff2") format("woff2");
+      }
+
+      /* Tuezday design tokens — values verbatim from apps/web/app/tokens.css */
+      :root {
+        --bg: oklch(0.966 0.005 256);
+        --bg-sunk: oklch(0.944 0.006 256);
+        --surface: oklch(0.995 0.003 256);
+        --ink: oklch(0.205 0.013 264);
+        --ink-2: oklch(0.405 0.012 264);
+        --line: oklch(0.855 0.008 264);
+        --line-soft: oklch(0.905 0.006 264);
+        --accent: oklch(0.555 0.15 256);
+        --accent-deep: oklch(0.485 0.15 256);
+        --accent-wash: oklch(0.945 0.035 256);
+        --tone-soul: oklch(0.635 0.19 27);
+        --tone-icp: oklch(0.715 0.105 205);
+        --tone-voice: oklch(0.76 0.15 66);
+        --tone-history: oklch(0.775 0.135 132);
+        --tone-now: oklch(0.585 0.175 350);
+        --ready: oklch(0.55 0.13 150);
+        --ready-ink: oklch(0.39 0.1 150);
+        --ready-wash: oklch(0.95 0.035 150);
+        --attention-ink: oklch(0.43 0.11 64);
+        --attention-wash: oklch(0.955 0.045 75);
+        --shadow-low: 0 2px 4px oklch(0.205 0.02 264 / 0.06), 0 8px 24px oklch(0.205 0.02 264 / 0.06);
+        --radius-lg: 20px;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      body {
+        font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      .clip {
+        position: absolute;
+        inset: 0;
+      }
+      .inner {
+        position: absolute;
+        inset: 0;
+      }
+      /* every scene centres its own content block in the frame */
+      .stage {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 0 150px;
+      }
+
+      /* ---------- shared type ---------- */
+      .display {
+        font-family: "Archivo", ui-sans-serif, system-ui, sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.022em;
+        line-height: 1.14;
+        font-size: 80px;
+      }
+      .overline {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 26px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent-deep);
+      }
+      .body-lg {
+        font-size: 38px;
+        font-weight: 500;
+        color: var(--ink-2);
+        line-height: 1.38;
+      }
+      .mono {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+      }
+
+      /* ---------- background ---------- */
+      #bg-fill {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+      }
+      #glow {
+        position: absolute;
+        left: 360px;
+        top: 90px;
+        width: 1200px;
+        height: 900px;
+        border-radius: 999px;
+        background: radial-gradient(circle, var(--accent-wash) 0%, transparent 70%);
+        opacity: 0.45;
+      }
+
+      /* ---------- scene 1 — the forgetting ---------- */
+      #s1-stage {
+        align-items: flex-start;
+      }
+      #s1-l1 {
+        color: var(--ink-2);
+      }
+      #s1-l2 {
+        color: var(--ink);
+        margin-top: 12px;
+      }
+      #s1-chips {
+        display: flex;
+        gap: 18px;
+        margin-top: 76px;
+      }
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px 30px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 26px;
+        color: var(--ink-2);
+      }
+      .chip-dot {
+        display: block;
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: var(--accent);
+      }
+      #s1-l3 {
+        margin-top: 68px;
+      }
+
+      /* ---------- scene 2 — the brain ---------- */
+      #s2-tiles {
+        display: flex;
+        gap: 30px;
+        margin-top: 52px;
+        width: 100%;
+      }
+      .tile {
+        flex: 1 1 0;
+        background: var(--surface);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-low);
+        padding: 36px 32px;
+        height: 264px;
+      }
+      .tone-bar {
+        display: block;
+        width: 54px;
+        height: 5px;
+        border-radius: 999px;
+      }
+      .tile-title {
+        font-family: "Archivo", ui-sans-serif, sans-serif;
+        font-weight: 700;
+        font-size: 52px;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+        margin-top: 26px;
+      }
+      .tile-desc {
+        font-size: 28px;
+        line-height: 1.45;
+        color: var(--ink-2);
+        margin-top: 16px;
+      }
+      #s2-cap {
+        margin-top: 58px;
+      }
+
+      /* ---------- scene 3 — resolved, then gated ---------- */
+      #s3a {
+        position: absolute;
+        left: 150px;
+        right: 150px;
+        top: 150px;
+        text-align: center;
+      }
+      #s3-strip {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 50px;
+      }
+      .node {
+        min-width: 272px;
+        padding: 26px 30px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        box-shadow: var(--shadow-low);
+      }
+      .node-label {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 42px;
+        color: var(--ink);
+      }
+      .node-tok {
+        font-size: 22px;
+        color: var(--ink-2);
+        margin-top: 8px;
+      }
+      .node.is-bundle {
+        border-color: var(--accent);
+        background: var(--accent-wash);
+      }
+      .node.is-bundle .node-label,
+      .node.is-bundle .node-tok {
+        color: var(--accent-deep);
+      }
+      .conn {
+        width: 52px;
+        height: 1px;
+        background: var(--line);
+        flex: 0 0 auto;
+      }
+      #s3-line {
+        margin-top: 54px;
+      }
+      #s3b {
+        position: absolute;
+        left: 150px;
+        right: 150px;
+        top: 570px;
+        text-align: center;
+      }
+      #s3-card {
+        width: 620px;
+        margin: 0 auto;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-low);
+        padding: 28px 32px;
+        text-align: left;
+      }
+      .card-kicker {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 20px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-2);
+      }
+      .skel {
+        display: block;
+        height: 16px;
+        border-radius: 999px;
+        background: var(--bg-sunk);
+        margin-top: 18px;
+      }
+      #s3-pills {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        margin-top: 46px;
+      }
+      .pill {
+        padding: 16px 34px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 30px;
+        color: var(--ink-2);
+      }
+      .pill.is-attention {
+        background: var(--attention-wash);
+        border-color: var(--attention-ink);
+        color: var(--attention-ink);
+      }
+      .pill.is-ready {
+        background: var(--ready-wash);
+        border-color: var(--ready);
+        color: var(--ready-ink);
+      }
+      .arrow {
+        font-size: 32px;
+        color: var(--ink-2);
+      }
+      #s3-note {
+        margin-top: 44px;
+      }
+
+      /* ---------- scene 4 — the loop closes ---------- */
+      #s4-head {
+        position: absolute;
+        left: 150px;
+        right: 150px;
+        top: 148px;
+        text-align: center;
+      }
+      #s4-line {
+        margin-top: 30px;
+      }
+      #s4-approved {
+        position: absolute;
+        left: 980px;
+        top: 402px;
+        width: 470px;
+        background: var(--surface);
+        border: 1px solid var(--ready);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-low);
+        padding: 26px 30px;
+      }
+      #s4-pub {
+        position: absolute;
+        left: 1286px;
+        top: 366px;
+        padding: 14px 26px;
+        background: var(--accent-wash);
+        border: 1px solid var(--accent);
+        border-radius: 999px;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 24px;
+        color: var(--accent-deep);
+      }
+      #s4-now {
+        position: absolute;
+        left: 300px;
+        top: 402px;
+        width: 470px;
+        background: var(--surface);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-low);
+        padding: 34px 32px;
+      }
+      #s4-badge {
+        position: absolute;
+        left: 626px;
+        top: 366px;
+        padding: 10px 20px;
+        border-radius: 999px;
+        background: var(--tone-now);
+        color: oklch(0.995 0.003 256);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 22px;
+      }
+      #s4-svg {
+        position: absolute;
+        inset: 0;
+      }
+      #s4-glyph {
+        position: absolute;
+        left: 150px;
+        right: 150px;
+        top: 878px;
+        text-align: center;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+        font-size: 32px;
+        letter-spacing: 0.1em;
+        color: var(--ink-2);
+      }
+
+      /* ---------- scene 5 — wordmark ---------- */
+      #s5-mark {
+        width: 140px;
+        height: 140px;
+        border-radius: 34px;
+        background: var(--accent-deep);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Archivo", ui-sans-serif, sans-serif;
+        font-weight: 700;
+        font-size: 84px;
+        color: oklch(0.995 0.003 256);
+      }
+      #s5-word {
+        font-family: "Archivo", ui-sans-serif, sans-serif;
+        font-weight: 700;
+        font-size: 168px;
+        letter-spacing: -0.032em;
+        color: var(--ink);
+        margin-top: 44px;
+        line-height: 1.04;
+      }
+      #s5-tag {
+        margin-top: 28px;
+        font-size: 48px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="24.56"
+      data-width="1920"
+      data-height="1080"
+      data-fps="30"
+    >
+      <!-- background: full-bleed child, never the root itself -->
+      <div id="bg" class="clip" data-start="0" data-duration="24.56" data-track-index="0">
+        <div id="bg-fill"></div>
+        <div id="glow"></div>
+      </div>
+
+      <!-- Scene 1 — The forgetting -->
+      <section id="s1" class="clip" data-start="0" data-duration="6.96" data-track-index="1">
+        <div class="inner" data-layout-allow-overlap="true" id="s1-in">
+          <div class="stage" id="s1-stage">
+            <div id="s1-l1" class="display">Your ads learned what converts.</div>
+            <div id="s1-l2" class="display">Your outbound never heard about it.</div>
+            <div id="s1-chips">
+              <div class="chip"><span class="chip-dot" data-dot></span>Content</div>
+              <div class="chip"><span class="chip-dot" data-dot></span>Ads</div>
+              <div class="chip"><span class="chip-dot" data-dot></span>Outbound</div>
+              <div class="chip"><span class="chip-dot" data-dot></span>CRM</div>
+              <div class="chip"><span class="chip-dot" data-dot></span>PR</div>
+            </div>
+            <div id="s1-l3" class="body-lg">Every new campaign starts like none of that happened.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 2 — The brain -->
+      <section id="s2" class="clip" data-start="6.56" data-duration="5.86" data-track-index="2">
+        <div class="inner" data-layout-allow-overlap="true" id="s2-in">
+          <div class="stage">
+            <div class="overline">Central Brain</div>
+            <div id="s2-tiles">
+              <div class="tile" id="t1">
+                <span class="tone-bar" style="background: var(--tone-soul)"></span>
+                <div class="tile-title">Soul</div>
+                <div class="tile-desc">what you believe</div>
+              </div>
+              <div class="tile" id="t2">
+                <span class="tone-bar" style="background: var(--tone-icp)"></span>
+                <div class="tile-title">ICP</div>
+                <div class="tile-desc">who you sell to</div>
+              </div>
+              <div class="tile" id="t3">
+                <span class="tone-bar" style="background: var(--tone-voice)"></span>
+                <div class="tile-title">Voice</div>
+                <div class="tile-desc">how you sound</div>
+              </div>
+              <div class="tile" id="t4">
+                <span class="tone-bar" style="background: var(--tone-history)"></span>
+                <div class="tile-title">History</div>
+                <div class="tile-desc">what worked, what failed</div>
+              </div>
+              <div class="tile" id="t5">
+                <span class="tone-bar" style="background: var(--tone-now)"></span>
+                <div class="tile-title">Now</div>
+                <div class="tile-desc">what matters this week</div>
+              </div>
+            </div>
+            <div id="s2-cap" class="body-lg">
+              Everything Tuezday knows about your company — edit it anytime.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 3 — Resolved, then gated -->
+      <section id="s3" class="clip" data-start="12.02" data-duration="6.4" data-track-index="3">
+        <div class="inner" data-layout-allow-overlap="true" id="s3-in">
+          <div id="s3a">
+            <div class="overline">Context Inspector</div>
+            <div id="s3-strip">
+              <div class="node" id="n1">
+                <div class="node-label">soul</div>
+                <div class="node-tok">~1.4k tok</div>
+              </div>
+              <span class="conn" id="c1"></span>
+              <div class="node" id="n2">
+                <div class="node-label">icp</div>
+                <div class="node-tok">outline</div>
+              </div>
+              <span class="conn" id="c2"></span>
+              <div class="node" id="n3">
+                <div class="node-label">voice</div>
+                <div class="node-tok">~0.9k tok</div>
+              </div>
+              <span class="conn" id="c3"></span>
+              <div class="node" id="n4">
+                <div class="node-label">now</div>
+                <div class="node-tok">~0.6k tok</div>
+              </div>
+              <span class="conn" id="c4"></span>
+              <div class="node is-bundle" id="n5">
+                <div class="node-label">bundle</div>
+                <div class="node-tok">per task</div>
+              </div>
+            </div>
+            <div id="s3-line" class="body-lg">See the exact context — before any AI sees it.</div>
+          </div>
+          <div id="s3b">
+            <div id="s3-card">
+              <div class="card-kicker">LinkedIn post</div>
+              <span class="skel" style="width: 92%"></span>
+              <span class="skel" style="width: 64%"></span>
+            </div>
+            <div id="s3-pills">
+              <div class="pill" id="p1">Draft</div>
+              <span class="arrow" id="a1">&rarr;</span>
+              <div class="pill is-attention" id="p2">Pending review</div>
+              <span class="arrow" id="a2">&rarr;</span>
+              <div class="pill is-ready" id="p3">Approved</div>
+            </div>
+            <div id="s3-note" class="body-lg">Nothing publishes itself.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 4 — The loop closes -->
+      <section id="s4" class="clip" data-start="18.02" data-duration="3.66" data-track-index="4">
+        <div class="inner" data-layout-allow-overlap="true" id="s4-in">
+          <div id="s4-head">
+            <div class="overline">What the brain learned</div>
+            <div id="s4-line" class="body-lg">What worked flows back into the brain.</div>
+          </div>
+          <svg id="s4-svg" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path
+              id="s4-path"
+              d="M 1215 566 C 1215 806, 535 806, 535 636"
+              stroke="oklch(0.555 0.15 256)"
+              stroke-width="3"
+              stroke-linecap="round"
+              fill="none"
+            />
+            <polygon id="s4-arrow" points="535,612 523,636 547,636" fill="oklch(0.555 0.15 256)" />
+          </svg>
+          <div id="s4-approved">
+            <div class="card-kicker">LinkedIn post</div>
+            <span class="skel" style="width: 88%"></span>
+            <span class="skel" style="width: 58%"></span>
+          </div>
+          <div id="s4-pub">Published</div>
+          <div id="s4-now">
+            <span class="tone-bar" style="background: var(--tone-now)"></span>
+            <div class="tile-title">Now</div>
+            <div class="tile-desc">what matters this week</div>
+          </div>
+          <div id="s4-badge">updated</div>
+          <div id="s4-glyph">signal &rarr; change</div>
+        </div>
+      </section>
+
+      <!-- Scene 5 — Wordmark -->
+      <section id="s5" class="clip" data-start="21.28" data-duration="3.28" data-track-index="5">
+        <div class="inner" data-layout-allow-overlap="true" id="s5-in">
+          <div class="stage">
+            <div id="s5-lockup">
+              <div id="s5-mark">t</div>
+            </div>
+            <div id="s5-word">Tuezday</div>
+            <div id="s5-tag">GTM that remembers.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Audio -->
+      <audio
+        id="bgm"
+        data-start="0"
+        data-duration="24.56"
+        data-track-index="10"
+        data-volume="0.3"
+        src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3"
+      ></audio>
+      <audio
+        id="sfx-reset"
+        data-start="2.68"
+        data-duration="0.12"
+        data-track-index="11"
+        data-volume="0.42"
+        src="assets/sfx/impact/impactSoft_medium_000.ogg"
+      ></audio>
+      <audio
+        id="sfx-card1"
+        data-start="6.56"
+        data-duration="0.6"
+        data-track-index="12"
+        data-volume="0.38"
+        src="assets/sfx/casino/card-slide-1.ogg"
+      ></audio>
+      <audio
+        id="sfx-card5"
+        data-start="8.74"
+        data-duration="0.6"
+        data-track-index="13"
+        data-volume="0.38"
+        src="assets/sfx/casino/card-slide-1.ogg"
+      ></audio>
+      <audio
+        id="sfx-approved"
+        data-start="17.47"
+        data-duration="1.48"
+        data-track-index="14"
+        data-volume="0.52"
+        src="assets/sfx/impact/impactBell_heavy_000.ogg"
+      ></audio>
+      <audio
+        id="sfx-loop"
+        data-start="19.66"
+        data-duration="0.65"
+        data-track-index="15"
+        data-volume="0.58"
+        src="assets/sfx/impact/impactBell_heavy_003.ogg"
+      ></audio>
+      <audio
+        id="sfx-mark"
+        data-start="21.28"
+        data-duration="0.12"
+        data-track-index="16"
+        data-volume="0.48"
+        src="assets/sfx/interface/bong_001.ogg"
+      ></audio>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+      var E = "power3.out";
+
+      /* =========================================================
+         Initial states — applied immediately (not tl.set at 0) so
+         frame 0 renders the hidden state.
+         ========================================================= */
+      gsap.set(["#s2-in", "#s3-in", "#s4-in", "#s5-in"], { opacity: 0 });
+      gsap.set(["#s1-l1", "#s1-l2", "#s1-chips", "#s1-l3"], { opacity: 0, y: 30 });
+      gsap.set(".overline", { opacity: 0, y: 16 });
+      gsap.set(["#t1", "#t2", "#t3", "#t4", "#t5"], { opacity: 0, y: 34 });
+      gsap.set("#s2-cap", { opacity: 0, y: 18 });
+      gsap.set("#s3a", { y: 150 });
+      gsap.set(["#n1", "#n2", "#n3", "#n4", "#n5"], { opacity: 0, y: 26 });
+      gsap.set(["#c1", "#c2", "#c3", "#c4"], { opacity: 0 });
+      gsap.set("#s3-line", { opacity: 0, y: 18 });
+      gsap.set("#s3-card", { opacity: 0, y: 28 });
+      gsap.set(["#p1", "#p2", "#p3", "#a1", "#a2"], { opacity: 0, y: 16 });
+      gsap.set("#s3-note", { opacity: 0, y: 16 });
+      gsap.set("#s4-line", { opacity: 0, y: 18 });
+      gsap.set("#s4-approved", { opacity: 0 });
+      gsap.set("#s4-pub", { opacity: 0, y: 14 });
+      gsap.set("#s4-now", { opacity: 0, y: 20 });
+      gsap.set("#s4-badge", { opacity: 0, scale: 0.8 });
+      gsap.set("#s4-glyph", { opacity: 0 });
+      gsap.set("#s4-path", { strokeDasharray: 1100, strokeDashoffset: 1100 });
+      gsap.set("#s4-arrow", { opacity: 0 });
+      gsap.set("#s5-lockup", { opacity: 0, y: 26 });
+      gsap.set("#s5-word", { opacity: 0, y: 30 });
+      gsap.set("#s5-tag", { opacity: 0, y: 16 });
+
+      /* =========================================================
+         Scene crossfades — animate inner wrappers, never the clips.
+         Outgoing leads, incoming follows, so text never stacks.
+         ========================================================= */
+      function crossfade(outSel, inSel, at) {
+        tl.to(outSel, { opacity: 0, duration: 0.3, ease: "none" }, at);
+        tl.to(inSel, { opacity: 1, duration: 0.3, ease: "none" }, at + 0.16);
+      }
+      crossfade("#s1-in", "#s2-in", 6.56);
+      crossfade("#s2-in", "#s3-in", 12.02);
+      crossfade("#s3-in", "#s4-in", 18.02);
+      crossfade("#s4-in", "#s5-in", 21.28);
+
+      /* =========================================================
+         Scene 1 — The forgetting (0 → 6.56)
+         ========================================================= */
+      tl.to("#s1-l1", { opacity: 1, y: 0, duration: 0.55, ease: E }, 0.1);
+      tl.to("#s1-l2", { opacity: 1, y: 0, duration: 0.55, ease: E }, 1.35);
+      // beat-grid: chips settle on the 2.19s beat
+      tl.to("#s1-chips", { opacity: 1, y: 0, duration: 0.5, ease: E }, 2.19);
+      // the reset — every channel's learning drains to grey on the 2.73s beat
+      tl.to(
+        "[data-dot]",
+        { backgroundColor: "oklch(0.855 0.008 264)", duration: 0.45, ease: "none", stagger: 0.05 },
+        2.73,
+      );
+      tl.to("#s1-l3", { opacity: 1, y: 0, duration: 0.55, ease: E }, 3.27);
+
+      /* =========================================================
+         Scene 2 — The brain (6.56 → 12.02)
+         Five DocTiles arrive on consecutive beats, then the whole
+         set HOLDS until 12.02 so every label clears its read floor.
+         ========================================================= */
+      tl.to("#s2 .overline", { opacity: 1, y: 0, duration: 0.4, ease: E }, 6.72);
+      // beat-grid: 6.56 / 7.09 / 7.64 / 8.19 / 8.74 — tile 5 lands on a strongCue
+      var TILE_BEATS = [6.56, 7.09, 7.64, 8.19, 8.74];
+      ["#t1", "#t2", "#t3", "#t4", "#t5"].forEach(function (sel, i) {
+        tl.to(sel, { opacity: 1, y: 0, duration: 0.5, ease: E }, TILE_BEATS[i]);
+      });
+      tl.to("#s2-cap", { opacity: 1, y: 0, duration: 0.5, ease: E }, 9.29);
+
+      /* =========================================================
+         Scene 3 — Resolved, then gated (12.02 → 18.02)
+         ========================================================= */
+      tl.to("#s3 .overline", { opacity: 1, y: 0, duration: 0.4, ease: E }, 12.18);
+      tl.to("#s3-line", { opacity: 1, y: 0, duration: 0.5, ease: E }, 12.35);
+      // beat-grid: FlowStrip nodes on 12.55 / 13.11 / 13.64 / 14.20 / 14.73
+      var NODE_BEATS = [12.55, 13.11, 13.64, 14.2, 14.73];
+      ["#n1", "#n2", "#n3", "#n4", "#n5"].forEach(function (sel, i) {
+        tl.to(sel, { opacity: 1, y: 0, duration: 0.45, ease: E }, NODE_BEATS[i]);
+      });
+      ["#c1", "#c2", "#c3", "#c4"].forEach(function (sel, i) {
+        tl.to(sel, { opacity: 1, duration: 0.3, ease: "none" }, NODE_BEATS[i] + 0.3);
+      });
+
+      // the resolver hands off: the strip lifts, the gate takes the frame
+      tl.to("#s3a", { y: 0, duration: 0.6, ease: "power2.inOut" }, 15.29);
+      tl.to("#s3-line", { opacity: 0, duration: 0.35, ease: "none" }, 15.29);
+      tl.to("#s3-card", { opacity: 1, y: 0, duration: 0.5, ease: E }, 15.44);
+      tl.to("#s3-note", { opacity: 1, y: 0, duration: 0.4, ease: E }, 15.9);
+      tl.to("#p1", { opacity: 1, y: 0, duration: 0.35, ease: E }, 15.84);
+      tl.to("#a1", { opacity: 1, duration: 0.25, ease: "none" }, 16.14);
+      tl.to("#p2", { opacity: 1, y: 0, duration: 0.35, ease: E }, 16.38);
+      tl.to("#a2", { opacity: 1, duration: 0.25, ease: "none" }, 16.9);
+      // beat-locked: 17.47s strongCue (1.00) — the payoff of the gate
+      tl.to("#p3", { opacity: 1, y: 0, duration: 0.4, ease: "back.out(1.5)" }, 17.47);
+
+      /* =========================================================
+         Scene 4 — The loop closes (18.02 → 21.28)
+         ========================================================= */
+      tl.to("#s4 .overline", { opacity: 1, y: 0, duration: 0.4, ease: E }, 18.18);
+      tl.to("#s4-line", { opacity: 1, y: 0, duration: 0.45, ease: E }, 18.34);
+      tl.to("#s4-now", { opacity: 1, y: 0, duration: 0.45, ease: E }, 18.24);
+      tl.to("#s4-approved", { opacity: 1, duration: 0.3, ease: "none" }, 18.2);
+      // beat-locked: 18.56s strongCue (0.99) — the approved post goes live
+      tl.to("#s4-pub", { opacity: 1, y: 0, duration: 0.4, ease: "back.out(1.8)" }, 18.56);
+      // the return path draws back into Now
+      tl.to("#s4-path", { strokeDashoffset: 0, duration: 0.72, ease: "power2.inOut" }, 18.94);
+      // beat-locked: 19.66s strongCue (0.96) — the circle completes
+      tl.to("#s4-now", { scale: 1.04, duration: 0.22, ease: "power2.out" }, 19.66);
+      tl.to("#s4-now", { scale: 1, duration: 0.38, ease: "power2.inOut" }, 19.88);
+      tl.to("#s4-arrow", { opacity: 1, duration: 0.2, ease: "none" }, 19.56);
+      tl.to("#s4-badge", { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }, 19.66);
+      tl.to("#s4-glyph", { opacity: 1, duration: 0.4, ease: "none" }, 20.19);
+
+      /* =========================================================
+         Scene 5 — Wordmark (21.28 → 24.56)
+         ========================================================= */
+      tl.to("#s5-lockup", { opacity: 1, y: 0, duration: 0.5, ease: E }, 21.44);
+      tl.to("#s5-word", { opacity: 1, y: 0, duration: 0.55, ease: E }, 21.58);
+      tl.to("#s5-tag", { opacity: 1, y: 0, duration: 0.5, ease: E }, 22.25);
+
+      /* =========================================================
+         Music — fade in, hold, withdraw so the last line lands quiet
+         ========================================================= */
+      tl.set("#bgm", { volume: 0 }, 0);
+      tl.to("#bgm", { volume: 0.3, duration: 0.6, ease: "none" }, 0);
+      tl.to("#bgm", { volume: 0, duration: 1.36, ease: "none" }, 23.2);
+
+      /* =========================================================
+         Audio-reactive — per-frame sampling (never a single tween).
+         Drives ONLY the accent wash behind the frame and the mark's
+         presence. No waveform / EQ / strobe visuals.
+         ========================================================= */
+      var glowEl = document.getElementById("glow");
+      var markEl = document.getElementById("s5-mark");
+
+      function applyAudioFrame(fr) {
+        if (!fr) return;
+        var bass = (fr.bands[0] + fr.bands[1]) * 0.5;
+        var rms = fr.rms || 0;
+        if (glowEl) {
+          glowEl.style.opacity = (0.32 + bass * 0.26).toFixed(4);
+          glowEl.style.transform = "scale(" + (1 + bass * 0.1).toFixed(4) + ")";
+        }
+        if (markEl) {
+          markEl.style.transform = "scale(" + (1 + rms * 0.035).toFixed(4) + ")";
+        }
+      }
+
+      (function wireAudioReactive() {
+        if (typeof AUDIO_DATA === "undefined" || !AUDIO_DATA.frames) return;
+        var fps = AUDIO_DATA.fps || 30;
+        var total = Math.min(AUDIO_DATA.totalFrames, Math.ceil(24.56 * fps));
+        for (var f = 0; f < total; f++) {
+          tl.call(
+            (function (frame) {
+              return function () {
+                applyAudioFrame(frame);
+              };
+            })(AUDIO_DATA.frames[f]),
+            [],
+            f / fps,
+          );
+        }
+      })();
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "plane": {
+      "command": "npx",
+      "args": ["tsx", "apps/mcp-plane/src/index.ts"]
+    }
+  }
+}
