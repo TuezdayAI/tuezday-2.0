@@ -97,12 +97,12 @@ describe("billing routes (Task 5)", () => {
 
   test("POST /webhooks/stripe processes valid webhook", async () => {
     // Just seed a workspace to match the mocked metadata
-    db.insert(workspaces).values({
+    await db.insert(workspaces).values({
       id: "test-ws",
       name: "Webhook WS",
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
 
     const res = await app.inject({
       method: "POST",
@@ -114,9 +114,9 @@ describe("billing routes (Task 5)", () => {
     expect(res.json()).toEqual({ received: true });
 
     // Validate the subscription was inserted
-    const sub = db.select().from(subscriptions).where(eq(subscriptions.workspaceId, "test-ws")).get();
+    const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, "test-ws"));
     expect(sub).toBeDefined();
-    expect(sub.plan).toBe("pro");
-    expect(sub.status).toBe("active");
+    expect(sub?.plan).toBe("pro");
+    expect(sub?.status).toBe("active");
   });
 });

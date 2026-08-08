@@ -79,7 +79,7 @@ async function readFixture(
   }> = {},
 ) {
   const body = new FixtureBody(Array.isArray(input) ? input : [input]);
-  const result = await readBoundedBody({
+  const result = readBoundedBody({
     body,
     contentType: options.contentType ?? "application/json",
     contentEncoding: options.contentEncoding,
@@ -368,7 +368,7 @@ describe("safe-fetch streaming decoding", () => {
     const controller = new AbortController();
     const compressedPrefix = gzipSync(Buffer.from('{"safe":true}')).subarray(0, 5);
     const body = new FixtureBody([compressedPrefix], true);
-    const result = await readBoundedBody({
+    const result = readBoundedBody({
       body,
       contentType: "application/json",
       contentEncoding: "gzip",
@@ -548,7 +548,7 @@ describe("DefaultSafeFetchService resource policy", () => {
       ],
     });
 
-    const pending = await h.service.fetch({
+    const pending = h.service.fetch({
       url: "https://public.example/start",
       profile: "json",
     });

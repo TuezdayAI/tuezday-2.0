@@ -9,8 +9,8 @@ import type pg from "pg";
 import { buildApp, type BuildAppOptions, type TuezdayApp } from "../src/app";
 import { closeDb, createDb, type Db } from "../src/db";
 import {
-  TEMPLATE_DB,
   adminClient,
+  cloneTemplate,
   fixtureDatabaseName,
   quoteIdent,
   urlFor,
@@ -37,11 +37,17 @@ const fixtures: { name: string; url: string; db: Db }[] = [];
 export async function createTestDb(): Promise<Db> {
   const name = fixtureDatabaseName();
   admin ??= adminClient();
-  await (await admin).query(
-    `CREATE DATABASE ${quoteIdent(name)} TEMPLATE ${quoteIdent(TEMPLATE_DB)}`,
-  );
+  await cloneTemplate(await admin, name);
   const url = urlFor(name);
-  const db = await createDb(url, { migrated: true, max: 4 });
+  // Small pool with a short idle timeout: a run opens hundreds of fixtures and
+  // holds each until its file ends, so the binding constraint is the server's
+  // connection slots rather than per-fixture throughput.
+  const db = await createDb(url, {
+    migrated: true,
+    max: 2,
+    idleTimeoutMillis: 1_000,
+    allowExitOnIdle: true,
+  });
   fixtures.push({ name, url, db });
   return db;
 }

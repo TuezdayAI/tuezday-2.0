@@ -103,7 +103,7 @@ describe("OpenRouterGateway", () => {
         });
       })) as Fetcher;
 
-    const pending = await new OpenRouterGateway(
+    const pending = new OpenRouterGateway(
       "or-key",
       undefined,
       fetcher,
@@ -306,7 +306,7 @@ describe("GeminiGateway", () => {
         }),
     );
 
-    const pending = await new GeminiGateway("gemini-key").generate({
+    const pending = new GeminiGateway("gemini-key").generate({
       prompt: "p",
       signal: controller.signal,
     });

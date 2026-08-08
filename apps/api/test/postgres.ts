@@ -70,3 +70,23 @@ export async function dropFixtureDatabases(client: pg.Client): Promise<number> {
 export function fixtureDatabaseName(): string {
   return `${FIXTURE_PREFIX}${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 }
+
+/**
+ * Clone the template into a fresh fixture database.
+ *
+ * `STRATEGY = FILE_COPY` is the whole reason a fixture is affordable: the
+ * PG15+ default (WAL_LOG) writes the entire 14MB template through WAL and
+ * costs ~250ms, while a plain directory copy costs ~35ms. WAL_LOG exists so
+ * the clone survives a crash and replicates — neither of which a database that
+ * is dropped at the end of the test file needs. Postgres 14 and older do not
+ * accept the clause, so the plain form is the fallback.
+ */
+export async function cloneTemplate(client: pg.Client, name: string): Promise<void> {
+  const from = `${quoteIdent(name)} TEMPLATE ${quoteIdent(TEMPLATE_DB)}`;
+  try {
+    await client.query(`CREATE DATABASE ${from} STRATEGY = FILE_COPY`);
+  } catch (err) {
+    if ((err as { code?: string }).code !== "42601") throw err; // syntax_error
+    await client.query(`CREATE DATABASE ${from}`);
+  }
+}

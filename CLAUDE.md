@@ -21,18 +21,21 @@ The planning documents define what gets built and in what order — read the rel
 - `npm install` — install all workspaces (npm workspaces monorepo; Node ≥ 20)
 - `npm run dev` — run renderer (Fastify + Playwright, http://localhost:7457), API (Fastify, http://localhost:3001), web (Next.js, http://localhost:3000), and the required background worker
 - `npm run dev:app` — run only API + web; automatic background work does not run
-- `npm test` — run all Vitest suites (api + contracts + brain). API tests use in-memory SQLite with the checked-in Drizzle migrations
+- `npm test` — run all Vitest suites (api + contracts + brain). API tests need a running Postgres: `npm run postgres:up` first (see Environment)
 - `npm test -- <substring>` — run only test files whose path matches (e.g. `npm test -- brain`); add `-t "<name>"` to filter by test name
 - `npm run typecheck` — `tsc --noEmit` across all workspaces (there is no lint step)
-- `npm run db:generate -w apps/api` — generate a Drizzle migration after editing `apps/api/src/db/schema.ts` (commit the generated SQL under `apps/api/drizzle/`)
+- `npm run db:generate -w apps/api` — generate a Drizzle migration after editing `apps/api/src/db/schema.ts` (commit the generated SQL under `apps/api/drizzle/`). Run it from `apps/api`, not the repo root
+- `npm run postgres:up` / `postgres:down` — start/stop the local Postgres (pgvector image, port 5433) that dev and tests use. `down` deletes the volume
+- `npm run db:migrate-to-postgres -- [<sqlite-file>] [<database-url>]` — one-shot copy of a pre-Sprint-74 SQLite dev database into Postgres
 - `npm run nango:up` / `nango:down` — bring the Nango connector backend up/down via Docker Compose (`infra/`). Not needed for tests, which inject fakes.
 - `npm run evidence:migrate` — one-time R2R → native evidence-store migration (Sprint 47); `npm run evidence:parity -- <workspace-id>` compares retrieval quality against a still-running R2R.
 - `npm run test:watch` — run Vitest in watch mode (alias: `vitest`)
 
 ## Environment
 
-Copy `.env.example` to `.env` at the repo root (dev server loads it via dotenv). Required vars:
+Copy `.env.example` to `.env` at the repo root (dev server loads it via dotenv). Start the database with `npm run postgres:up` before `npm run dev` or `npm test` — both need it. Required vars:
 
+- `DATABASE_URL` — Postgres connection string. Unset falls back to the local development server on `localhost:5433` that `postgres:up` starts; a production container must set it explicitly, and the boot check refuses to start without it (the fallback is loopback, which inside a container is the container).
 - `GEMINI_API_KEY` — Gemini 2.5 Flash (default LLM). `GEMINI_MODEL` overrides the model name.
 - `TUEZDAY_WORKER_TOKEN` — system actor token used by the worker to call the API across workspaces. Generate with: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
 - `TUEZDAY_INTERNAL_API_URL` — direct worker-to-API origin; production requires HTTPS, while loopback HTTP is accepted locally. Do not point it at the browser/MCP API gateway.
@@ -44,7 +47,7 @@ CI (`.github/workflows/ci.yml`) runs `npm run typecheck && npm test` on Node 22 
 
 ## Stack (locked at Sprint 1)
 
-TypeScript everywhere, ESM (`"type": "module"`), run directly with `tsx` (no build step in dev). Next.js App Router (`apps/web`), Fastify (`apps/api`, routes → services → db), Drizzle ORM on better-sqlite3 (Postgres swap planned — keep the schema portable, keep all DB access inside `apps/api/src/db` and services). The default LLM is Gemini 2.5 Flash via a provider-agnostic gateway. Shared zod contracts live in `packages/contracts` and are the **only** place enum vocabularies (brain doc types, approval states, output ratings, task types, channels, roles) are defined — import them, never redeclare.
+TypeScript everywhere, ESM (`"type": "module"`), run directly with `tsx` (no build step in dev). Next.js App Router (`apps/web`), Fastify (`apps/api`, routes → services → db), Drizzle ORM on Postgres via node-postgres (Sprint 74; keep all DB access inside `apps/api/src/db` and services). The default LLM is Gemini 2.5 Flash via a provider-agnostic gateway. Shared zod contracts live in `packages/contracts` and are the **only** place enum vocabularies (brain doc types, approval states, output ratings, task types, channels, roles) are defined — import them, never redeclare.
 
 ## Core Product Concept
 
@@ -65,7 +68,7 @@ buildApp({ db, llm?, fetcher?, evidence?, connectors?, workerToken? })
 Key seams (integrations live behind these interfaces — never let provider code leak into services):
 
 - **LLM** — `llm/gateway.ts` defines `LlmGateway` / `GenerateParams` / `GenerateResult` and `GatewayError`. `gemini.ts` is the only implementation. Services depend on the interface only.
-- **Evidence/RAG** — `evidence/store.ts` (`EvidenceStore`) with `evidence/db-store.ts` (`DbEvidenceStore`, native SQLite FTS5 + sqlite-vec) as the impl since Sprint 47 — no external service.
+- **Evidence/RAG** — `evidence/store.ts` (`EvidenceStore`) with `evidence/db-store.ts` (`DbEvidenceStore`, Postgres full-text + pgvector) as the impl since Sprint 47 — no external service.
 - **Connectors** — `connectors/fabric.ts` (`ConnectorFabric`) with `connectors/nango.ts`; concrete providers under `connectors/{ads,crm,social}` (Meta ads, Freshsales CRM, Reddit social).
 - **Discovery** — `discovery/adapters.ts` takes an injected `Fetcher` so tests feed fixtures instead of real HTTP.
 - **Mailer** — `mail/mailer.ts` (`Mailer`) with a Resend-backed impl; console fallback in dev/tests.
@@ -84,7 +87,11 @@ Any `/workspaces/:id/...` route additionally requires membership in that workspa
 
 ## Database
 
-`db/index.ts` → `createDb(file)` opens better-sqlite3 (WAL, `foreign_keys = ON`) and runs the checked-in migrations from `apps/api/drizzle/`. Pass `":memory:"` for tests. The dev DB is `apps/api/tuezday.db` (gitignored). Schema is one file: `apps/api/src/db/schema.ts` — edit it, then `db:generate` to produce a migration; do not hand-write migration SQL.
+`db/index.ts` → `await createDb(url)` opens a `pg.Pool` and runs the checked-in migrations from `apps/api/drizzle/`. It is **async** — every caller awaits it. `createDb` is also where the INT8 type parser lives: node-postgres returns bigint as a string, and every timestamp in this schema is an epoch-ms bigint.
+
+Schema is one file: `apps/api/src/db/schema.ts` — edit it, then `db:generate` to produce a migration; do not hand-write migration SQL. Two conventions the schema header repeats: timestamps are `bigint({ mode: "number" })`, never `timestamp` and never `integer` (int4 overflows epoch-ms); and a few tables carry a `seq bigserial` as an insertion-order tie-breaker, replacing SQLite's implicit rowid.
+
+Tests get a real database each (`createTestDb()` in `test/helpers.ts`), cloned from a template the global setup migrates once — see `test/postgres.ts`. Fixtures are dropped per test file. Postgres must be running: `npm run postgres:up`.
 
 ## Testing patterns
 
@@ -123,7 +130,7 @@ Integrate behind service/API boundaries (never fork into core):
 
 | Capability | Primary | Notes |
 |---|---|---|
-| RAG/evidence corpus | Native since Sprint 47 (SQLite FTS5 + sqlite-vec) | R2R retired; RAGFlow only if heavy PDF parsing becomes core |
+| RAG/evidence corpus | Native since Sprint 47 (Postgres tsvector/GIN + pgvector HNSW) | R2R retired; RAGFlow only if heavy PDF parsing becomes core |
 | OAuth/connectors | Nango | Elastic license — deploy as separate service, never mix code into Tuezday |
 | Workflow automation | Activepieces | external automations only, never core generation/approval logic |
 | Data sync | Airbyte | Tuezday owns the metric model |

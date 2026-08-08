@@ -59,7 +59,7 @@ describe("billing gating (Task 3)", () => {
     // First one will fail with 409 because we don't have OAuth app set up, but it passes the entitlement gate!
     // Wait, the entitlement gate runs FIRST.
     // Let's spoof a connection to use up the quota.
-    db.insert(connections).values({
+    await db.insert(connections).values({
       id: "conn-1",
       workspaceId: ws.id,
       providerKey: "reddit",
@@ -68,7 +68,7 @@ describe("billing gating (Task 3)", () => {
       status: "connected",
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    }).run();
+    });
 
     const res2 = await app.inject({
       method: "POST",

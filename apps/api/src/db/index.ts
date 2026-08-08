@@ -37,6 +37,10 @@ export interface CreateDbOptions {
   migrated?: boolean;
   /** Pool size; tests use a small pool because they open many databases. */
   max?: number;
+  /** Release an idle connection after this long. Unset keeps node-postgres' 10s. */
+  idleTimeoutMillis?: number;
+  /** Let the process exit with idle connections still pooled (tests). */
+  allowExitOnIdle?: boolean;
 }
 
 /**
@@ -44,7 +48,16 @@ export interface CreateDbOptions {
  * `url` is a libpq connection string (`postgres://user:pass@host:port/db`).
  */
 export async function createDb(url: string, options: CreateDbOptions = {}): Promise<Db> {
-  const pool = new pg.Pool({ connectionString: url, max: options.max ?? 10 });
+  const pool = new pg.Pool({
+    connectionString: url,
+    max: options.max ?? 10,
+    ...(options.idleTimeoutMillis === undefined
+      ? {}
+      : { idleTimeoutMillis: options.idleTimeoutMillis }),
+    ...(options.allowExitOnIdle === undefined
+      ? {}
+      : { allowExitOnIdle: options.allowExitOnIdle }),
+  });
   // node-postgres emits `error` on *idle* clients — a server restart, an
   // administrator terminating the backend, a network drop. With no listener
   // that is an unhandled 'error' event, which takes the process down. The pool

@@ -80,7 +80,7 @@ describe("database-clock task leases", () => {
     const db = await createTestDb();
     let signalSeen: AbortSignal | undefined;
 
-    const resultPromise = await withTaskLease(
+    const resultPromise = withTaskLease(
       db,
       {
         key: "automation:workspace-1",

@@ -428,7 +428,7 @@ describe("bounded leased discovery scheduler", () => {
     };
     const deps = dependencies(db, pageReader);
 
-    const first = await runDiscoveryScheduler(deps, { workspaceId: "workspace-1" });
+    const first = runDiscoveryScheduler(deps, { workspaceId: "workspace-1" });
     expect(calls).toBe(1);
 
     const overlap = await runDiscoveryScheduler(deps, {
@@ -644,7 +644,7 @@ describe("bounded leased discovery scheduler", () => {
       });
     };
 
-    const pending = await runDiscoveryScheduler(
+    const pending = runDiscoveryScheduler(
       dependencies(db, pageReader, {
         policy: policy({
           maxJobsPerTick: 1,
@@ -809,7 +809,7 @@ describe("Fastify discovery shutdown", () => {
     });
     const workspaceId = await addWorkspaceAndSource(app);
 
-    const running = await app.inject({
+    const running = app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/discovery/run`,
     });
@@ -859,7 +859,7 @@ describe("Fastify discovery shutdown", () => {
     });
     const workspaceId = await addWorkspaceAndSource(app);
 
-    const running = await app.inject({
+    const running = app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/discovery/run`,
     });
