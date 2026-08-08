@@ -1,0 +1,47 @@
+# Postgres for Tuezday (Sprint 74) — LOCAL DEVELOPMENT AND TESTS ONLY.
+#
+# The durability settings below (fsync=off and friends) trade crash safety for
+# speed because this volume is disposable. Never point a production deployment
+# at this file.
+#
+# pgvector/pgvector ships the `vector` extension preinstalled — the evidence
+# store needs it, and building it into the image keeps `npm test` a one-command
+# affair. Port 5433 so a Postgres already running on the host's 5432 is not
+# shadowed.
+#
+#   npm run postgres:up     # start
+#   npm run postgres:down   # stop and delete the volume
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: tuezday-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tuezday
+      POSTGRES_PASSWORD: tuezday
+      POSTGRES_DB: tuezday
+      # The test harness creates and drops databases constantly; this keeps
+      # template cloning from being throttled by fsync on a throwaway volume.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - max_connections=300
+    ports:
+      - "5433:5432"
+    volumes:
+      - tuezday-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tuezday -d tuezday"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  tuezday-pgdata:

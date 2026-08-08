@@ -9,8 +9,13 @@ export interface LeaseToken {
   expiresAt: number;
 }
 
+/**
+ * Wall clock in epoch milliseconds, read from the database rather than the
+ * caller. Leases must be timed by the one clock every worker agrees on — a
+ * worker's local `Date.now()` can be skewed and would expire another's lease.
+ */
 export const DATABASE_NOW_MS = sql<number>`
-  CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+  (EXTRACT(EPOCH FROM now()) * 1000)::bigint
 `;
 
 function toToken(row: TaskLeaseRow): LeaseToken {

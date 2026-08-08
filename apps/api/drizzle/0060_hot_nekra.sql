@@ -1,1 +1,0 @@
-ALTER TABLE `approval_decisions` ADD `content_fingerprint` text;

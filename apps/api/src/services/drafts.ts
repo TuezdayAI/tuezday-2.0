@@ -381,16 +381,16 @@ export async function humanApprovalCoveringDraft(
       ),
     )
     // createdAt is millisecond resolution, so two approvals logged in the same
-    // millisecond tie. SQLite's implicit rowid is monotonic with insertion, so
-    // it breaks the tie by true insertion order; the `id` column is a random
-    // UUID and would order arbitrarily.
+    // millisecond tie. `seq` is monotonic with insertion, so it breaks the tie
+    // by true insertion order; the `id` column is a random UUID and would order
+    // arbitrarily.
     //
     // Today this tie-break is belt-and-braces: `approved` is terminal in the
     // contracts state machine (no `edit`/`reject` edge out of it), so a draft
-    // cannot reach a second approve decision through the API. Whoever migrates
-    // this to Postgres may simply drop the rowid term rather than hunt for an
-    // equivalent — unless an un-approve path has been added by then.
-    .orderBy(desc(approvalDecisions.createdAt), sql`${approvalDecisions}.rowid desc`)
+    // cannot reach a second approve decision through the API. Sprint 74 kept
+    // the term rather than dropping it — `seq` replaced SQLite's rowid, so the
+    // invariant survives if an un-approve path is ever added.
+    .orderBy(desc(approvalDecisions.createdAt), desc(approvalDecisions.seq))
     .get();
   if (!latest?.contentFingerprint) return null;
 

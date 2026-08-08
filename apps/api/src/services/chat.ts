@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   CHAT_THREAD_TOKEN_CAP,
   type AgentStopReason,
@@ -241,14 +241,14 @@ export async function deleteSession(db: Db, workspaceId: string, sessionId: stri
 /**
  * Ordered transcript for a thread, in strict insertion order. Several messages
  * in one turn (user → tool → assistant) can share a millisecond `createdAt`, so
- * we tie-break on the implicit rowid rather than the random uuid PK.
+ * we tie-break on the insertion-order `seq` rather than the random uuid PK.
  */
 export async function listMessages(db: Db, sessionId: string): Promise<ChatMessage[]> {
   return (await db
     .select()
     .from(chatMessages)
     .where(eq(chatMessages.sessionId, sessionId))
-    .orderBy(sql`${chatMessages}.rowid asc`)
+    .orderBy(asc(chatMessages.seq))
     .all())
     .map(rowToMessage);
 }

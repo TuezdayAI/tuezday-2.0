@@ -1,1 +1,0 @@
-ALTER TABLE `drafts` ADD `media_json` text;

@@ -162,7 +162,7 @@ async function loadEngineState(db: Db, run: PipelineRunRow): Promise<EngineState
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, run.id))
-    .orderBy(sql`rowid`)
+    .orderBy(asc(pipelineRunSteps.seq))
     .all();
   const state: EngineState = {
     runId: run.id,
@@ -993,7 +993,7 @@ export async function getPipelineRunDetail(
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, runId))
-    .orderBy(sql`rowid`)
+    .orderBy(asc(pipelineRunSteps.seq))
     .all())
     .map(rowToStep);
   return { ...rowToRun(row), steps };

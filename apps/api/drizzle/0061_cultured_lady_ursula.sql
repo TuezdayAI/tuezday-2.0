@@ -1,1 +1,0 @@
-ALTER TABLE `external_action_decisions` ADD `actor_human` integer DEFAULT true NOT NULL;

@@ -1,1 +1,0 @@
-ALTER TABLE `campaign_plan_revisions` ADD `timeframe` text DEFAULT '' NOT NULL;

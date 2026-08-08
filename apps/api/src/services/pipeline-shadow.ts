@@ -131,7 +131,7 @@ export async function listShadowPairs(
     .innerJoin(pipelineRuns, eq(pipelineShadowPairs.runId, pipelineRuns.id))
     .leftJoin(drafts, eq(pipelineShadowPairs.draftId, drafts.id))
     .where(and(...conditions))
-    .orderBy(desc(pipelineShadowPairs.createdAt), sql`${pipelineShadowPairs}.rowid desc`)
+    .orderBy(desc(pipelineShadowPairs.createdAt), desc(pipelineShadowPairs.seq))
     .limit(Math.min(options.limit ?? 50, 100))
     .all())
     .map((row) =>
@@ -409,7 +409,7 @@ export async function listRolloutDecisions(db: Db, workspaceId: string): Promise
     .select()
     .from(pipelineRolloutDecisions)
     .where(eq(pipelineRolloutDecisions.workspaceId, workspaceId))
-    .orderBy(desc(pipelineRolloutDecisions.createdAt), sql`${pipelineRolloutDecisions}.rowid desc`)
+    .orderBy(desc(pipelineRolloutDecisions.createdAt), desc(pipelineRolloutDecisions.seq))
     .all())
     .map((row) => ({
       id: row.id,
