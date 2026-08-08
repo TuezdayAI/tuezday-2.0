@@ -443,13 +443,26 @@ SQLite can no longer host it.
   designed, and the call site now logs rather than letting a database outage
   take the process down.
 
-  *Suite duration: ~25 minutes* (2,292 tests), against ~2.5 minutes on
-  in-process SQLite. That is the cost of D-74.2 and it is mostly unavoidable —
-  a request that made fifty in-process calls now makes fifty round trips.
-  Two harness decisions took the worst of it off: `STRATEGY = FILE_COPY` for
-  the fixture clone, and dropping each fixture when its test ends rather than
-  when its file does (at ~140 live databases the server spent more time on
-  catalog and autovacuum bookkeeping than on queries; that change alone was
-  worth 25–30%). The remaining lever, untried, is `maxWorkers` — this machine
-  has 8 cores and runs ten vitest workers alongside a Postgres that peaks over
-  400% CPU.
+  *Suite duration: 8 minutes* for the whole repo (323 files, 3,278 tests),
+  against ~2.5 minutes on in-process SQLite. Three harness decisions got it
+  there, in ascending order of how much they mattered:
+
+  - `STRATEGY = FILE_COPY` for the fixture clone. PG15+ defaults to `WAL_LOG`,
+    which writes every copied page through WAL.
+  - Dropping each fixture when its test ends rather than when its file does.
+    At ~140 live databases the server spent more time on catalog and autovacuum
+    bookkeeping than on queries; worth 25–30% on its own.
+  - `maxWorkers: "50%"`. This was first measured and dismissed as unavoidable
+    round-trip cost, which was wrong. Postgres is a co-tenant process now, not
+    an in-process library, and Vitest's default of `cores - 1` workers leaves
+    it nothing to run on. On 8 cores, the same 30-file subset takes 35s at 4
+    workers, 41s at 3 or 5, 48s at 7 (the default) and 62s at 10. Splitting the
+    machine between the workers and the server took the full run from ~25
+    minutes to 8.
+
+  The residual gap against SQLite is real and permanent: a handler that made
+  fifty in-process calls now makes fifty round trips. Measured against the dev
+  container, a round trip is 0.23ms for an indexed read and 0.61ms for a write,
+  so a fifty-query handler spends ~9ms in the database — against LLM calls
+  measured in seconds, this is not a production concern. It is only a
+  suite-duration one, because the suite does it 3,278 times.
